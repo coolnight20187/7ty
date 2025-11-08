@@ -1,0 +1,205 @@
+/* style.css
+   Theme: Dashboard v13 - New Theme for "Tra cứu & Bán Bill"
+   Purpose: responsive, clean UI for lookup, KHO, members, selling, history
+   Notes: designed to work with Bootstrap base but override many styles for a modern look
+*/
+
+/* ================ 0. Base & Fonts ================ */
+:root{
+  --bg: #f8f9fa;
+  --card-bg: #fff;
+  --muted: #6c757d;
+  --accent: #0d6efd;
+  --danger: #dc3545;
+  --success: #198754;
+  --border: rgba(0,0,0,0.06);
+  --radius: 12px;
+  --shadow: 0 6px 18px rgba(16,24,40,0.06);
+  --shadow-2: 0 10px 30px rgba(16,24,40,0.08);
+  --glass: rgba(255,255,255,0.6);
+  --text: #212529;
+  --small: 0.85rem;
+  font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* Dark theme variables */
+[data-bs-theme="dark"]{
+  --bg: #0f1720;
+  --card-bg: #0f1720;
+  --muted: #9aa3b2;
+  --accent: #4f8cff;
+  --danger: #ff6b6b;
+  --success: #34d399;
+  --border: rgba(255,255,255,0.06);
+  --shadow: 0 6px 18px rgba(0,0,0,0.6);
+  --shadow-2: 0 10px 30px rgba(0,0,0,0.6);
+  --glass: rgba(255,255,255,0.03);
+  --text: #e6eef8;
+  --small: 0.85rem;
+}
+
+/* Global */
+html,body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  margin: 0;
+  padding: 0;
+}
+.container-fluid { max-width: 1320px; margin: 0 auto; padding: 1rem; }
+
+/* Links and icons */
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* Utility small text */
+.small, .form-text, .form-label.small { font-size: var(--small); color: var(--muted); }
+
+/* ================ 1. Header & Nav ================ */
+.navbar { background: var(--card-bg); border-bottom: 1px solid var(--border); box-shadow: var(--shadow); height: 64px; }
+.navbar .navbar-brand { font-weight: 700; font-size: 1.05rem; display: flex; gap: .5rem; align-items: center; }
+.navbar .navbar-text { color: var(--muted); font-size: .9rem; }
+
+/* Avatar small */
+.avatar-sm { width: 34px; height: 34px; border-radius: 8px; object-fit: cover; }
+
+/* ================ 2. Controls area / Cards ================ */
+.controls-area .card {
+  border: none;
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(255,255,255,0.98), var(--card-bg));
+  box-shadow: var(--shadow);
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+.controls-area .card:hover { transform: translateY(-4px); box-shadow: var(--shadow-2); }
+.controls-area .card .card-header { font-weight: 600; background: transparent; border-bottom: 1px solid var(--border); padding: 0.6rem 1rem; }
+.controls-area .card .card-body { padding: 1rem; display: flex; flex-direction: column; gap: 0.6rem; }
+
+/* Controls sizing */
+.controls-area .form-control-sm, .controls-area .form-select-sm, .controls-area .btn-sm { font-size: .875rem; }
+
+/* Buttons */
+.btn { border-radius: 8px; }
+.btn-primary { background: linear-gradient(145deg, #0d6efd, #0a58ca); border: none; box-shadow: none; }
+.btn-outline-secondary { color: var(--text); border-color: var(--border); background: transparent; }
+
+/* Secondary text muted */
+.text-muted { color: var(--muted) !important; }
+
+/* ================ 3. Result header controls ================ */
+.result-controls-card .card { border-radius: var(--radius); box-shadow: var(--shadow); border: none; }
+.result-controls-card .input-group-text { background: transparent; border-right: 0; color: var(--muted); }
+.result-controls-card .form-control { border-left: 0; }
+
+/* Column toggle dropdown */
+.col-toggle summary { list-style: none; cursor: pointer; border-radius: 8px; padding: .35rem .6rem; display: inline-block; background: rgba(0,0,0,0.02); border: 1px solid var(--border); }
+.col-toggle[open] .col-options { display: block; }
+
+/* Col options */
+.col-options { display: none; position: absolute; background: var(--card-bg); border-radius: 8px; padding: .6rem; box-shadow: var(--shadow); z-index: 2000; min-width: 180px; border: 1px solid var(--border); }
+.col-options label { display: block; font-size: .9rem; margin-bottom: .35rem; color: var(--text); }
+
+/* Sort icon */
+.sort-icon { margin-left: .35rem; color: var(--muted); font-size: .85rem; }
+th.sorted-asc .sort-icon::after { content: '↑'; margin-left: .25rem; }
+th.sorted-desc .sort-icon::after { content: '↓'; margin-left: .25rem; }
+
+/* View toggle */
+.view-toggle .btn { min-width: 44px; }
+
+/* Pagination row */
+.pagination-row select { min-width: 90px; }
+
+/* ================ 4. Table Styles ================ */
+.table-wrap { border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border); }
+#resultTable { min-width: 1100px; border-collapse: collapse; }
+#resultTable th, #resultTable td { padding: .55rem .75rem; vertical-align: middle; border-bottom: 1px solid var(--border); font-size: .92rem; }
+#resultTable thead th { position: sticky; top: 0; z-index: 10; background: linear-gradient(180deg, rgba(255,255,255,0.98), var(--card-bg)); color: var(--muted); font-weight: 700; text-transform: none; }
+.table-hover > tbody > tr:hover > * { background: rgba(13,110,253,0.04); }
+
+/* Hidden column class */
+.hidden { display: none !important; }
+
+/* Footer style */
+#resultTable tfoot td { background: linear-gradient(180deg, rgba(0,0,0,0.01), transparent); font-weight: 700; }
+
+/* Checkbox align */
+.form-check-input { width: 18px; height: 18px; }
+
+/* Money styling */
+.money { font-weight: 700; color: var(--danger); }
+
+/* Responsive: make table scroll on small devices */
+@media (max-width: 900px) {
+  #resultTable { min-width: 900px; }
+  .controls-area .card { margin-bottom: .6rem; }
+  .controls-area .card .card-body { padding: .75rem; }
+  .controls-area .card .card-header { padding: .4rem .75rem; }
+}
+
+/* ================ 5. Grid (cards) ================ */
+.grid-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; padding: .25rem; }
+.grid-card { border-radius: 12px; overflow: hidden; }
+.grid-card .card-header { font-weight: 700; background: transparent; border-bottom: 1px solid var(--border); padding: .6rem .8rem; }
+.grid-card .card-body { padding: .8rem; }
+.grid-card .card-total { font-size: 1.1rem; font-weight: 800; color: var(--danger); margin-top: .25rem; }
+
+/* Card footer */
+.card .card-footer { background: transparent; border-top: none; padding-top: .45rem; color: var(--muted); }
+
+/* ================ 6. State / Empty / Loading ================ */
+.result-state-container { border-radius: var(--radius); padding: 2.2rem; border: 1px dashed var(--border); background: linear-gradient(180deg, rgba(255,255,255,0.6), transparent); }
+.result-state-container .state-icon { font-size: 3.2rem; color: var(--muted); }
+.result-state-container .state-message { margin-top: .75rem; font-size: 1.05rem; color: var(--muted); }
+
+/* Loading spinner inside buttons */
+.btn .spinner-border { display: none; }
+.btn.is-loading .spinner-border { display: inline-block !important; }
+.btn.is-loading .btn-text { display: none !important; }
+
+/* Toast/status */
+#status { position: fixed; right: 1rem; top: 80px; z-index: 3000; min-width: 260px; border-radius: 10px; }
+
+/* ================ 7. Modals ================ */
+.modal-content { border-radius: 12px; box-shadow: var(--shadow-2); border: none; }
+.modal-header, .modal-footer { border: none; }
+.list-group-item { border: none; border-bottom: 1px dashed var(--border); }
+
+/* Notes list meta */
+.note-meta { font-size: .8rem; color: var(--muted); }
+
+/* ================ 8. Utilities ================ */
+.d-none { display: none !important; }
+.flex-center { display:flex; align-items:center; justify-content:center; }
+.mt-auto { margin-top: auto !important; }
+
+/* Admin / user helpers */
+.admin-only { display: none !important; }
+.user-only { display: none !important; }
+body.is-admin .admin-only { display: inline-flex !important; }
+body.is-user .user-only { display: inline-flex !important; }
+
+/* scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* small responsive tweaks */
+@media (max-width: 640px){
+  .controls-area .card .card-body { gap: .4rem; }
+  .grid-container { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+  .navbar .navbar-brand { font-size: .98rem; }
+}
+
+/* ================ 9. Print optimizations ================ */
+@media print {
+  body { background: #fff; color: #000; }
+  .controls-area, .navbar, .modal { display: none !important; }
+  #resultTable { border: 1px solid #ddd; }
+  #resultTable thead th { position: static; }
+  #resultTable tfoot td { position: static; }
+}
+
+/* ================ End of style.css ================ */

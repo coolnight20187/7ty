@@ -1,0 +1,49 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "node",
+    "lib": ["ES2022", "DOM"],
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "noImplicitThis": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": false,
+    "incremental": true,
+    "outDir": "dist",
+    "rootDir": ".",
+    "sourceMap": true,
+    "removeComments": false,
+    "declaration": true,
+    "declarationMap": true,
+    "types": ["node", "express"],
+    "typeRoots": ["./node_modules/@types", "./types"]
+  },
+  "include": [
+    "server.ts",
+    "netlify/functions/**/*.ts",
+    "netlify/**/*",
+    "src/**/*",
+    "scripts/**/*",
+    "types/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    ".cache",
+    "coverage",
+    "build"
+  ],
+  "ts-node": {
+    "transpileOnly": true,
+    "preferTsExts": true,
+    "swc": false
+  }
+}
