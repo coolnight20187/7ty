@@ -1,24 +1,12 @@
 /**
  * netlify/functions/get-bills.ts
  *
- * Netlify Function to perform bulk requests to CheckBill Pro (/check-electricity) with:
- *  - concurrency control (p-limit)
- *  - timeout and retry/backoff for each upstream call
- *  - input validation and per-account error isolations
- *  - returns array of results: { account, ok, normalized?, raw?, error? }
+ * Bulk check bills with concurrency, timeout/retry, input validation and logging.
  *
- * Expected environment variables:
- * - NEW_API_BASE_URL (e.g. https://bill.7ty.vn/api)
- * - NEW_API_PATH (/check-electricity)
- * - NEW_API_TIMEOUT_MS (default 30000)
- * - NEW_API_MAX_RETRIES (default 3)
- * - NEW_API_CONCURRENCY (default 6)
- * - SKIP_AUTH (optional for dev)
- *
- * Notes:
- * - This function is safe to call from the frontend only when you enforce authentication,
- *   or when you have server-side protections (e.g., require JWT).
- * - Do NOT expose service_role keys on the client.
+ * Expected env:
+ * - NEW_API_BASE_URL, NEW_API_PATH, NEW_API_TIMEOUT_MS, NEW_API_MAX_RETRIES, NEW_API_CONCURRENCY
+ * - SKIP_AUTH (optional)
+ * - LOG_LEVEL (optional: debug|info|warn|error)
  */
 
 import { Handler } from '@netlify/functions';
@@ -51,7 +39,6 @@ async function fetchWithTimeoutAndRetry(url: string, opts: RequestInit = {}, tim
       if (!res.ok) {
         const snippet = text ? text.slice(0, 1000) : `Status ${res.status}`;
         const err = new Error(`Upstream ${res.status}: ${snippet}`);
-        // do not retry for most 4xx except 429
         if (res.status >= 400 && res.status < 500 && res.status !== 429) throw err;
         throw err;
       }
@@ -87,7 +74,7 @@ function normalizeCheckBillResponse(resp: any, account: string, sku: string) {
     const bills = Array.isArray(dd?.bills) ? dd.bills : [];
     if (topSuccess && innerSuccess && bills.length > 0) {
       const bill = bills[0];
-      const money = safeNumber(bill.moneyAmount ?? bill.money_amount ?? 0);
+      const money = safeNumber(bill.moneyAmount ?? bill.money_amount ?? bill.amount ?? 0);
       return {
         key: `${sku}::${account}`,
         provider_id: sku,
@@ -136,16 +123,22 @@ const handler: Handler = async (event) => {
       return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
     }
 
-    // Basic auth stub: require Authorization header unless SKIP_AUTH=true
-    const auth = (event.headers['authorization'] || event.headers['Authorization'] || '').trim();
+    // Header lookup case-insensitive
+    const headers = Object.keys(event.headers || {}).reduce<Record<string,string>>((acc, k) => {
+      acc[k.toLowerCase()] = (event.headers as any)[k];
+      return acc;
+    }, {});
+    const auth = (headers['authorization'] || '').toString().trim();
     if (!auth && process.env.SKIP_AUTH !== 'true') {
       return { statusCode: 401, body: JSON.stringify({ error: 'Unauthorized' }) };
     }
 
+    // Parse body safely
     let body: any = {};
     try {
       body = event.body ? JSON.parse(event.body) : {};
     } catch (err) {
+      logWarn('Invalid JSON body', err?.message || err);
       return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON body' }) };
     }
 
@@ -159,7 +152,6 @@ const handler: Handler = async (event) => {
       return { statusCode: 400, body: JSON.stringify({ error: 'Thiếu sku (provider identifier)'} ) };
     }
 
-    // Rate-limited concurrency using p-limit
     const limit = pLimit(NEW_API_CONCURRENCY);
     const url = new URL(NEW_API_PATH, NEW_API_BASE_URL).toString();
 
@@ -167,6 +159,7 @@ const handler: Handler = async (event) => {
 
     const tasks = contract_numbers.map((acc: string) => limit(async () => {
       try {
+        logDebug('Calling upstream for', acc);
         const upstream = await fetchWithTimeoutAndRetry(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -181,10 +174,8 @@ const handler: Handler = async (event) => {
       }
     }));
 
-    // execute all tasks and await results
     const results = await Promise.all(tasks);
 
-    // Return results array
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
