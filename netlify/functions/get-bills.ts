@@ -10,7 +10,7 @@
  */
 
 import { Handler } from '@netlify/functions';
-import pLimit from 'p-limit';
+const pLimit = require('p-limit');
 
 const NEW_API_BASE_URL = process.env.NEW_API_BASE_URL || 'https://bill.7ty.vn/api';
 const NEW_API_PATH = process.env.NEW_API_PATH || '/check-electricity';
