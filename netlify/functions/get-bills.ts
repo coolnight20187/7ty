@@ -7,6 +7,11 @@
  * - NEW_API_BASE_URL, NEW_API_PATH, NEW_API_TIMEOUT_MS, NEW_API_MAX_RETRIES, NEW_API_CONCURRENCY
  * - SKIP_AUTH (optional)
  * - LOG_LEVEL (optional: debug|info|warn|error)
+ *
+ * Notes:
+ * - Uses CommonJS-safe import for p-limit to be compatible with Netlify runtime and older bundlers.
+ * - Parses upstream data.response_text if present to extract clearer error messages.
+ * - Returns array of results for each account; each item contains ok boolean and either normalized or error/upstream details.
  */
 
 import { Handler } from '@netlify/functions';
@@ -27,6 +32,8 @@ function logError(...args: any[]) { console.error('[get-bills]', ...args); }
 function sleep(ms: number) { return new Promise(resolve => setTimeout(resolve, ms)); }
 function safeNumber(v: any) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
 
+type UpstreamError = Error & { status?: number; preview?: string; fatal?: boolean };
+
 async function fetchWithTimeoutAndRetry(url: string, opts: RequestInit = {}, timeout = NEW_API_TIMEOUT_MS, retries = NEW_API_MAX_RETRIES): Promise<any> {
   async function attempt(remaining: number): Promise<any> {
     const controller = new AbortController();
@@ -34,33 +41,44 @@ async function fetchWithTimeoutAndRetry(url: string, opts: RequestInit = {}, tim
     try {
       const res = await fetch(url, { ...opts, signal: controller.signal });
       const text = await res.text();
-      clearTimeout(id);
 
+      // Status handling
       if (!res.ok) {
         const snippet = text ? text.slice(0, 1000) : `Status ${res.status}`;
-        const err = new Error(`Upstream ${res.status}: ${snippet}`);
-        if (res.status >= 400 && res.status < 500 && res.status !== 429) throw err;
+        // Treat 4xx (except 429) as fatal (no retry) because likely client/payload issue
+        const err = Object.assign(new Error(`Upstream ${res.status}: ${snippet}`) as UpstreamError, { status: res.status, preview: snippet, fatal: (res.status >= 400 && res.status < 500 && res.status !== 429) });
         throw err;
       }
 
       const ct = (res.headers.get('content-type') || '').toLowerCase();
-      // Prefer explicit JSON parsing when content-type says JSON; otherwise try JSON.parse but give clear error on HTML
+
+      // If content-type declares JSON, parse; otherwise try parse and provide clear preview if non-JSON
       if (ct.includes('application/json')) {
         try {
           return JSON.parse(text);
         } catch (e: any) {
-          throw new Error('Upstream returned invalid JSON');
+          const preview = text ? text.slice(0, 1000) : '<empty>';
+          const err = Object.assign(new Error('Upstream returned invalid JSON') as UpstreamError, { status: res.status, preview, fatal: true });
+          logError('Upstream invalid JSON', { url, preview });
+          throw err;
         }
       } else {
-        // Try to parse anyway (some upstreams omit content-type)
+        // Some upstreams omit content-type even for JSON; try parse; if not JSON, return a descriptive error with preview
         try {
           return JSON.parse(text);
         } catch (e: any) {
-          // Not JSON: surface the raw body for debugging
-          throw new Error(`Upstream returned non-JSON response: ${text ? text.slice(0, 1000) : '<empty>'}`);
+          const preview = text ? text.slice(0, 1000) : '<empty>';
+          const err = Object.assign(new Error('Upstream returned non-JSON response') as UpstreamError, { status: res.status, preview, fatal: true });
+          logWarn('Upstream returned non-JSON response', { url, preview });
+          throw err;
         }
       }
-    } catch (err: any) {
+    } catch (errAny: any) {
+      const err: UpstreamError = errAny;
+      // If fatal (e.g., 4xx non-429 or invalid JSON), do not retry
+      if (err?.fatal) {
+        throw err;
+      }
       clearTimeout(id);
       if (remaining <= 0) throw err;
       const base = 700;
@@ -68,6 +86,8 @@ async function fetchWithTimeoutAndRetry(url: string, opts: RequestInit = {}, tim
       logDebug(`Fetch error, retry in ${backoff}ms; remaining=${remaining}`, err?.message || err);
       await sleep(backoff + Math.floor(Math.random() * 200));
       return attempt(remaining - 1);
+    } finally {
+      clearTimeout(id);
     }
   }
   return attempt(retries);
@@ -75,11 +95,21 @@ async function fetchWithTimeoutAndRetry(url: string, opts: RequestInit = {}, tim
 
 function normalizeCheckBillResponse(resp: any, account: string, sku: string) {
   try {
+    // If upstream nests a JSON string in data.response_text, parse it for a clearer reason
+    if (resp?.data?.response_text && typeof resp.data.response_text === 'string') {
+      try {
+        resp.data.parsed_response_text = JSON.parse(resp.data.response_text);
+      } catch (e) {
+        resp.data.parsed_response_text = resp.data.response_text;
+      }
+    }
+
     const topSuccess = !!resp?.success;
     const data = resp?.data || {};
     const innerSuccess = !!data?.success;
     const dd = data?.data || {};
     const bills = Array.isArray(dd?.bills) ? dd.bills : [];
+
     if (topSuccess && innerSuccess && bills.length > 0) {
       const bill = bills[0];
       const money = safeNumber(bill.moneyAmount ?? bill.money_amount ?? bill.amount ?? 0);
@@ -96,7 +126,30 @@ function normalizeCheckBillResponse(resp: any, account: string, sku: string) {
         raw: resp
       };
     }
-    const reason = resp?.error ? (typeof resp.error === 'string' ? resp.error : JSON.stringify(resp.error).slice(0,200)) : 'Không nợ cước / không có dữ liệu';
+
+    // Build a clear reason from parsed_response_text -> resp.error -> status_code -> fallback
+    let reason = '';
+    if (data?.parsed_response_text) {
+      const pr = data.parsed_response_text;
+      if (typeof pr === 'string') {
+        reason = pr.slice(0, 400);
+      } else if (typeof pr === 'object' && pr !== null) {
+        reason = pr?.error?.message || pr?.message || JSON.stringify(pr).slice(0, 400);
+      } else {
+        reason = String(pr).slice(0, 400);
+      }
+    }
+
+    if (!reason && resp?.error) {
+      reason = typeof resp.error === 'string' ? resp.error : JSON.stringify(resp.error).slice(0, 400);
+    }
+
+    if (!reason && data?.status_code) {
+      reason = `Upstream status ${data.status_code}`;
+    }
+
+    if (!reason) reason = 'Không nợ cước / không có dữ liệu';
+
     return {
       key: `${sku}::${account}`,
       provider_id: sku,
@@ -176,9 +229,18 @@ const handler: Handler = async (event) => {
 
         const normalized = normalizeCheckBillResponse(upstream, acc, sku);
         return { account: acc, ok: true, normalized, raw: upstream };
-      } catch (err: any) {
-        logWarn(`Account ${acc} error:`, err?.message || err);
-        return { account: acc, ok: false, error: err?.message || 'Upstream error' };
+      } catch (errAny: any) {
+        const err: UpstreamError = errAny;
+        // Build a friendly, structured error without exposing too much upstream HTML
+        const upstreamStatus = err?.status || (err?.message?.match(/Upstream (\d{3})/) || [])[1];
+        const preview = err?.preview || (typeof err?.message === 'string' ? err.message.slice(0, 400) : undefined);
+        logWarn(`Account ${acc} error:`, upstreamStatus || err?.message || err);
+        return {
+          account: acc,
+          ok: false,
+          error: preview ? `Upstream ${upstreamStatus || 'error'}: ${preview}` : (err?.message || 'Upstream error'),
+          upstreamStatus: upstreamStatus ? Number(upstreamStatus) : undefined
+        };
       }
     }));
 
