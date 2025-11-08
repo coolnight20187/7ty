@@ -1,26 +1,19 @@
 /**
  * netlify/functions/get-bills.ts
  *
- * Netlify Function to perform bulk requests to CheckBill Pro (/check-electricity) with:
- *  - concurrency control (p-limit)
- *  - timeout and retry/backoff for each upstream call
- *  - input validation and per-account error isolations
- *  - returns array of results: { account, ok, normalized?, raw?, error? }
+ * Bulk check bills with concurrency, timeout/retry, input validation and logging.
  *
- * Expected environment variables:
- * - NEW_API_BASE_URL (e.g. https://bill.7ty.vn/api)
- * - NEW_API_PATH (/check-electricity)
- * - NEW_API_TIMEOUT_MS (default 30000)
- * - NEW_API_MAX_RETRIES (default 3)
- * - NEW_API_CONCURRENCY (default 6)
- * - SKIP_AUTH (optional for dev)
+ * Expected env:
+ * - NEW_API_BASE_URL, NEW_API_PATH, NEW_API_TIMEOUT_MS, NEW_API_MAX_RETRIES, NEW_API_CONCURRENCY
+ * - SKIP_AUTH (optional)
+ * - LOG_LEVEL (optional: debug|info|warn|error)
  *
  * Notes:
- * - This function is safe to call from the frontend only when you enforce authentication,
- *   or when you have server-side protections (e.g., require JWT).
- * - Do NOT expose service_role keys on the client.
+ * - Uses CommonJS-safe import for p-limit to be compatible with Netlify runtime and older bundlers.
+ * - Parses upstream data.response_text if present to extract clearer error messages.
+ * - Returns array of results for each account; each item contains ok boolean and either normalized or error/upstream details.
  */
-import pLimit from 'p-limit';
+const pLimit = require('p-limit');
 const NEW_API_BASE_URL = process.env.NEW_API_BASE_URL || 'https://bill.7ty.vn/api';
 const NEW_API_PATH = process.env.NEW_API_PATH || '/check-electricity';
 const NEW_API_TIMEOUT_MS = Number(process.env.NEW_API_TIMEOUT_MS || 30000);
@@ -43,27 +36,45 @@ async function fetchWithTimeoutAndRetry(url, opts = {}, timeout = NEW_API_TIMEOU
         try {
             const res = await fetch(url, { ...opts, signal: controller.signal });
             const text = await res.text();
-            clearTimeout(id);
+            // Status handling
             if (!res.ok) {
                 const snippet = text ? text.slice(0, 1000) : `Status ${res.status}`;
-                const err = new Error(`Upstream ${res.status}: ${snippet}`);
-                // do not retry for most 4xx except 429
-                if (res.status >= 400 && res.status < 500 && res.status !== 429)
-                    throw err;
+                // Treat 4xx (except 429) as fatal (no retry) because likely client/payload issue
+                const err = Object.assign(new Error(`Upstream ${res.status}: ${snippet}`), { status: res.status, preview: snippet, fatal: (res.status >= 400 && res.status < 500 && res.status !== 429) });
                 throw err;
             }
-            const ct = res.headers.get('content-type') || '';
-            if (!ct.includes('application/json')) {
+            const ct = (res.headers.get('content-type') || '').toLowerCase();
+            // If content-type declares JSON, parse; otherwise try parse and provide clear preview if non-JSON
+            if (ct.includes('application/json')) {
                 try {
                     return JSON.parse(text);
                 }
                 catch (e) {
-                    throw new Error('Upstream returned non-JSON response');
+                    const preview = text ? text.slice(0, 1000) : '<empty>';
+                    const err = Object.assign(new Error('Upstream returned invalid JSON'), { status: res.status, preview, fatal: true });
+                    logError('Upstream invalid JSON', { url, preview });
+                    throw err;
                 }
             }
-            return JSON.parse(text);
+            else {
+                // Some upstreams omit content-type even for JSON; try parse; if not JSON, return a descriptive error with preview
+                try {
+                    return JSON.parse(text);
+                }
+                catch (e) {
+                    const preview = text ? text.slice(0, 1000) : '<empty>';
+                    const err = Object.assign(new Error('Upstream returned non-JSON response'), { status: res.status, preview, fatal: true });
+                    logWarn('Upstream returned non-JSON response', { url, preview });
+                    throw err;
+                }
+            }
         }
-        catch (err) {
+        catch (errAny) {
+            const err = errAny;
+            // If fatal (e.g., 4xx non-429 or invalid JSON), do not retry
+            if (err?.fatal) {
+                throw err;
+            }
             clearTimeout(id);
             if (remaining <= 0)
                 throw err;
@@ -73,11 +84,23 @@ async function fetchWithTimeoutAndRetry(url, opts = {}, timeout = NEW_API_TIMEOU
             await sleep(backoff + Math.floor(Math.random() * 200));
             return attempt(remaining - 1);
         }
+        finally {
+            clearTimeout(id);
+        }
     }
     return attempt(retries);
 }
 function normalizeCheckBillResponse(resp, account, sku) {
     try {
+        // If upstream nests a JSON string in data.response_text, parse it for a clearer reason
+        if (resp?.data?.response_text && typeof resp.data.response_text === 'string') {
+            try {
+                resp.data.parsed_response_text = JSON.parse(resp.data.response_text);
+            }
+            catch (e) {
+                resp.data.parsed_response_text = resp.data.response_text;
+            }
+        }
         const topSuccess = !!resp?.success;
         const data = resp?.data || {};
         const innerSuccess = !!data?.success;
@@ -85,7 +108,7 @@ function normalizeCheckBillResponse(resp, account, sku) {
         const bills = Array.isArray(dd?.bills) ? dd.bills : [];
         if (topSuccess && innerSuccess && bills.length > 0) {
             const bill = bills[0];
-            const money = safeNumber(bill.moneyAmount ?? bill.money_amount ?? 0);
+            const money = safeNumber(bill.moneyAmount ?? bill.money_amount ?? bill.amount ?? 0);
             return {
                 key: `${sku}::${account}`,
                 provider_id: sku,
@@ -99,7 +122,28 @@ function normalizeCheckBillResponse(resp, account, sku) {
                 raw: resp
             };
         }
-        const reason = resp?.error ? (typeof resp.error === 'string' ? resp.error : JSON.stringify(resp.error).slice(0, 200)) : 'Không nợ cước / không có dữ liệu';
+        // Build a clear reason from parsed_response_text -> resp.error -> status_code -> fallback
+        let reason = '';
+        if (data?.parsed_response_text) {
+            const pr = data.parsed_response_text;
+            if (typeof pr === 'string') {
+                reason = pr.slice(0, 400);
+            }
+            else if (typeof pr === 'object' && pr !== null) {
+                reason = pr?.error?.message || pr?.message || JSON.stringify(pr).slice(0, 400);
+            }
+            else {
+                reason = String(pr).slice(0, 400);
+            }
+        }
+        if (!reason && resp?.error) {
+            reason = typeof resp.error === 'string' ? resp.error : JSON.stringify(resp.error).slice(0, 400);
+        }
+        if (!reason && data?.status_code) {
+            reason = `Upstream status ${data.status_code}`;
+        }
+        if (!reason)
+            reason = 'Không nợ cước / không có dữ liệu';
         return {
             key: `${sku}::${account}`,
             provider_id: sku,
@@ -133,16 +177,22 @@ const handler = async (event) => {
         if (event.httpMethod !== 'POST') {
             return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
         }
-        // Basic auth stub: require Authorization header unless SKIP_AUTH=true
-        const auth = (event.headers['authorization'] || event.headers['Authorization'] || '').trim();
+        // Header lookup case-insensitive
+        const headers = Object.keys(event.headers || {}).reduce((acc, k) => {
+            acc[k.toLowerCase()] = event.headers[k];
+            return acc;
+        }, {});
+        const auth = (headers['authorization'] || '').toString().trim();
         if (!auth && process.env.SKIP_AUTH !== 'true') {
             return { statusCode: 401, body: JSON.stringify({ error: 'Unauthorized' }) };
         }
+        // Parse body safely
         let body = {};
         try {
             body = event.body ? JSON.parse(event.body) : {};
         }
         catch (err) {
+            logWarn('Invalid JSON body', err?.message || err);
             return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON body' }) };
         }
         const contract_numbers = Array.isArray(body.contract_numbers) ? body.contract_numbers.map((v) => String(v)).map((s) => s.trim()).filter(Boolean) : [];
@@ -153,12 +203,12 @@ const handler = async (event) => {
         if (!sku) {
             return { statusCode: 400, body: JSON.stringify({ error: 'Thiếu sku (provider identifier)' }) };
         }
-        // Rate-limited concurrency using p-limit
         const limit = pLimit(NEW_API_CONCURRENCY);
         const url = new URL(NEW_API_PATH, NEW_API_BASE_URL).toString();
         logInfo(`Bulk call: accounts=${contract_numbers.length} sku=${sku} concurrency=${NEW_API_CONCURRENCY}`);
         const tasks = contract_numbers.map((acc) => limit(async () => {
             try {
+                logDebug('Calling upstream for', acc);
                 const upstream = await fetchWithTimeoutAndRetry(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -167,14 +217,21 @@ const handler = async (event) => {
                 const normalized = normalizeCheckBillResponse(upstream, acc, sku);
                 return { account: acc, ok: true, normalized, raw: upstream };
             }
-            catch (err) {
-                logWarn(`Account ${acc} error:`, err?.message || err);
-                return { account: acc, ok: false, error: err?.message || 'Upstream error' };
+            catch (errAny) {
+                const err = errAny;
+                // Build a friendly, structured error without exposing too much upstream HTML
+                const upstreamStatus = err?.status || (err?.message?.match(/Upstream (\d{3})/) || [])[1];
+                const preview = err?.preview || (typeof err?.message === 'string' ? err.message.slice(0, 400) : undefined);
+                logWarn(`Account ${acc} error:`, upstreamStatus || err?.message || err);
+                return {
+                    account: acc,
+                    ok: false,
+                    error: preview ? `Upstream ${upstreamStatus || 'error'}: ${preview}` : (err?.message || 'Upstream error'),
+                    upstreamStatus: upstreamStatus ? Number(upstreamStatus) : undefined
+                };
             }
         }));
-        // execute all tasks and await results
         const results = await Promise.all(tasks);
-        // Return results array
         return {
             statusCode: 200,
             headers: { 'Content-Type': 'application/json' },
