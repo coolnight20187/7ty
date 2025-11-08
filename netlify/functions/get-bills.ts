@@ -43,15 +43,23 @@ async function fetchWithTimeoutAndRetry(url: string, opts: RequestInit = {}, tim
         throw err;
       }
 
-      const ct = res.headers.get('content-type') || '';
-      if (!ct.includes('application/json')) {
+      const ct = (res.headers.get('content-type') || '').toLowerCase();
+      // Prefer explicit JSON parsing when content-type says JSON; otherwise try JSON.parse but give clear error on HTML
+      if (ct.includes('application/json')) {
         try {
           return JSON.parse(text);
-        } catch (e) {
-          throw new Error('Upstream returned non-JSON response');
+        } catch (e: any) {
+          throw new Error('Upstream returned invalid JSON');
+        }
+      } else {
+        // Try to parse anyway (some upstreams omit content-type)
+        try {
+          return JSON.parse(text);
+        } catch (e: any) {
+          // Not JSON: surface the raw body for debugging
+          throw new Error(`Upstream returned non-JSON response: ${text ? text.slice(0, 1000) : '<empty>'}`);
         }
       }
-      return JSON.parse(text);
     } catch (err: any) {
       clearTimeout(id);
       if (remaining <= 0) throw err;
