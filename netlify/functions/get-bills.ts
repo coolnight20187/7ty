@@ -101,7 +101,7 @@ function normalizeCheckBillResponse(resp: any, account: string, sku: string) {
       amount_previous: '0',
       raw: resp
     };
-  } catch (err) {
+  } catch (err: any) {
     return {
       key: `${sku}::${account}`,
       provider_id: sku,
@@ -137,7 +137,7 @@ const handler: Handler = async (event) => {
     let body: any = {};
     try {
       body = event.body ? JSON.parse(event.body) : {};
-    } catch (err) {
+    } catch (err: any) {
       logWarn('Invalid JSON body', err?.message || err);
       return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON body' }) };
     }
