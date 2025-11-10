@@ -10,8 +10,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 
-  <!-- Bootstrap 5 -->
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous" />
+  <!-- Bootstrap 5 CSS (stable) -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous" />
 
   <!-- Boxicons -->
   <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet" />
@@ -453,31 +453,53 @@
   <!-- Optional libs -->
   <!-- Put xlsx.full.min.js in public/ or use CDN as needed -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+  <!-- Load bootstrap bundle BEFORE any script that uses `bootstrap` -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
 
-  <!-- Inline client script (can be moved to app.js) -->
+  <!-- Inline client script (modal initialization moved inside DOMContentLoaded) -->
   <script>
     const API_BASE = '/api';
 
     function $(id){ return document.getElementById(id); }
-    function showToast(msg, delay=3000){ const tb=$('appToastBody'); tb.textContent=msg; const t=bootstrap.Toast.getOrCreateInstance($('appToast')); t.show(); if(delay) setTimeout(()=>t.hide(),delay); }
+    function showToast(msg, delay=3000){
+      const tb = $('appToastBody');
+      if(tb) tb.textContent = msg;
+      if(typeof bootstrap === 'undefined') return;
+      const toastEl = $('appToast');
+      if(!toastEl) return;
+      const t = bootstrap.Toast.getOrCreateInstance(toastEl);
+      t.show();
+      if(delay) setTimeout(()=>t.hide(), delay);
+    }
     function fmtCurrency(v){ try{return Number(v).toLocaleString('vi-VN')+' ₫';}catch{return v;} }
     function toggleSpinner(el, on=true){ const s=el.querySelector('.spinner-border'); if(!s) return; s.classList.toggle('d-none', !on); }
 
     let results = [], members = [], employees = [];
 
-    const loginModal = new bootstrap.Modal($('loginModal'));
-    const khoModal = new bootstrap.Modal($('khoModal'));
-    const historyModal = new bootstrap.Modal($('historyModal'));
-    const employeeModal = new bootstrap.Modal($('employeeModal'));
-    const notesModal = new bootstrap.Modal($('notesModal'));
+    // modal instances will be created after DOM + bootstrap loaded
+    let loginModal = null, khoModal = null, historyModal = null, employeeModal = null, notesModal = null;
 
     document.addEventListener('DOMContentLoaded', async () => {
+      // initialize modal instances only if bootstrap and element exist
+      if (typeof bootstrap !== 'undefined') {
+        if ($('loginModal')) loginModal = new bootstrap.Modal($('loginModal'), { backdrop: 'static' });
+        if ($('khoModal')) khoModal = new bootstrap.Modal($('khoModal'));
+        if ($('historyModal')) historyModal = new bootstrap.Modal($('historyModal'));
+        if ($('employeeModal')) employeeModal = new bootstrap.Modal($('employeeModal'));
+        if ($('notesModal')) notesModal = new bootstrap.Modal($('notesModal'));
+      } else {
+        console.warn('Bootstrap is not loaded yet; modal initialization skipped.');
+      }
+
       try{
         const h = await fetch(API_BASE + '/health');
         if(h.ok){
           const m = await fetch(API_BASE + '/members');
-          if(m.status === 401) loginModal.show(); else initApp();
+          if(m.status === 401){
+            if(loginModal) loginModal.show(); else showToast('Yêu cầu đăng nhập');
+          } else {
+            initApp();
+          }
         } else initApp();
       }catch(e){ initApp(); }
     });
@@ -492,11 +514,12 @@
       $('lookupBulkBtn').addEventListener('click', lookupBulk);
       $('importAllBtn').addEventListener('click', importAllResults);
       $('removeSelectedBtn').addEventListener('click', removeSelectedResults);
-      $('khoListBtn').addEventListener('click', async ()=>{ await refreshKho(); khoModal.show(); });
-      $('khoRefreshBtn').addEventListener('click', async ()=>{ await refreshKho(); showToast('Đã tải KHO'); });
-      $('khoImportBtn').addEventListener('click', importAllResults);
-      $('khoRemoveBtn').addEventListener('click', async ()=>{ const keys=prompt('Nhập key, ngăn cách bởi dấu phẩy'); if(!keys) return; const arr=keys.split(',').map(s=>s.trim()).filter(Boolean); await fetch(API_BASE + '/kho/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keys:arr})}); showToast('Gửi yêu cầu xóa'); });
-      $('historyBtn').addEventListener('click', async ()=>{ await refreshHistory(); historyModal.show(); });
+      $('khoListBtn').addEventListener('click', async ()=>{ await refreshKho(); if(khoModal) khoModal.show(); });
+      // safe optional handlers (check existence before adding)
+      if($('khoRefreshBtn')) $('khoRefreshBtn').addEventListener('click', async ()=>{ await refreshKho(); showToast('Đã tải KHO'); });
+      $('khoImportBtn')?.addEventListener('click', importAllResults);
+      $('khoRemoveBtn')?.addEventListener('click', async ()=>{ const keys=prompt('Nhập key, ngăn cách bởi dấu phẩy'); if(!keys) return; const arr=keys.split(',').map(s=>s.trim()).filter(Boolean); await fetch(API_BASE + '/kho/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keys:arr})}); showToast('Gửi yêu cầu xóa'); });
+      $('historyBtn')?.addEventListener('click', async ()=>{ await refreshHistory(); if(historyModal) historyModal.show(); });
       $('historyRefreshBtn')?.addEventListener('click', async ()=>{ await refreshHistory(); showToast('Đã tải lịch sử'); });
       $('historyExportCsvBtn')?.addEventListener('click', ()=>{ window.location.href = API_BASE + '/history?export=csv'; });
 
@@ -506,15 +529,15 @@
 
       $('selectAllMain')?.addEventListener('change', (e)=>{ const checked=e.target.checked; document.querySelectorAll('#mainResultsTbody input[type="checkbox"]').forEach(cb=>cb.checked=checked); });
 
-      $('loginForm').addEventListener('submit', (ev)=>{ ev.preventDefault(); loginModal.hide(); initApp(); showToast('Đăng nhập (tạm)'); });
+      $('loginForm')?.addEventListener('submit', (ev)=>{ ev.preventDefault(); if(loginModal) loginModal.hide(); initApp(); showToast('Đăng nhập (tạm)'); });
 
       $('sellBtn')?.addEventListener('click', async (e)=>{ const btn=e.currentTarget; toggleSpinner(btn,true); try{ const memberId=$('memberSelect').value; if(!memberId){ showToast('Chọn member'); return; } const from=Number($('targetFrom').value||0); const to=Number($('targetTo').value||0); const url=new URL(API_BASE + '/kho/list', location.origin); if(from) url.searchParams.append('fromAmount', from); if(to) url.searchParams.append('toAmount', to); const resp=await fetch(url.toString()); const arr=resp.ok?await resp.json():[]; if(!arr.length){ showToast('Không có bill'); return; } if(!confirm('Xác nhận bán '+arr.length+' mục?')) return; const keys=arr.map(x=>x.key); const s=await fetch(API_BASE + '/sell',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({member_id: memberId, keys})}); const j=await s.json(); showToast('Đã bán: '+(j.sold_count||0)); await refreshKho(); await refreshHistory(); }catch(err){console.error(err); showToast('Lỗi khi bán')} finally{ toggleSpinner(btn,false);} });
 
-      $('employeeSearchBtn').addEventListener('click', ()=>{ const q=$('employeeSearchInput').value.trim().toLowerCase(); const sel=$('employeeSelect'); sel.innerHTML=''; employees.filter(e=> (e.username||'').toLowerCase().includes(q) || (e.full_name||'').toLowerCase().includes(q)).forEach(emp=>{ const opt=document.createElement('option'); opt.value=emp.id; opt.textContent=(emp.full_name||emp.username)+' • '+(emp.role||'user'); sel.appendChild(opt); }); });
+      $('employeeSearchBtn')?.addEventListener('click', ()=>{ const q=$('employeeSearchInput').value.trim().toLowerCase(); const sel=$('employeeSelect'); sel.innerHTML=''; employees.filter(e=> (e.username||'').toLowerCase().includes(q) || (e.full_name||'').toLowerCase().includes(q)).forEach(emp=>{ const opt=document.createElement('option'); opt.value=emp.id; opt.textContent=(emp.full_name||emp.username)+' • '+(emp.role||'user'); sel.appendChild(opt); }); });
 
-      $('memberSearch').addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ const q=$('memberSearch').value.trim().toLowerCase(); const sel=$('memberSelect'); sel.innerHTML='<option value="">— Chọn thành viên —</option>'+members.filter(m=> (m.name||'').toLowerCase().includes(q)).map(m=>`<option value="${m.id}">${m.name}</option>`).join(''); } });
+      $('memberSearch')?.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ const q=$('memberSearch').value.trim().toLowerCase(); const sel=$('memberSelect'); sel.innerHTML='<option value="">— Chọn thành viên —</option>'+members.filter(m=> (m.name||'').toLowerCase().includes(q)).map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join(''); } });
 
-      $('openHelpBtn').addEventListener('click', ()=>{ alert('Trợ giúp:\\n- Tra cứu -> Nhập kết quả vào KHO -> Mở KHO để quản lý -> Bán để chuyển sang Lịch sử.\\n- Cấu hình API tại server, kiểm tra SKIP_AUTH cho dev.'); });
+      $('openHelpBtn')?.addEventListener('click', ()=>{ alert('Trợ giúp:\\n- Tra cứu -> Nhập kết quả vào KHO -> Mở KHO để quản lý -> Bán để chuyển sang Lịch sử.\\n- Cấu hình API tại server, kiểm tra SKIP_AUTH cho dev.'); });
     }
 
     async function lookupBulk(){
@@ -552,11 +575,11 @@
 
     async function loadEmployees(){ try{ const resp=await fetch(API_BASE + '/members'); if(resp.ok){ employees=[]; document.querySelectorAll('.admin-only').forEach(el=>el.classList.remove('d-none')); } }catch(e){console.error(e);} }
 
-    async function loadKhoProviders(){ try{ const resp=await fetch(API_BASE + '/kho/list'); if(!resp.ok) return; const arr=await resp.json(); const providers=Array.from(new Set(arr.map(r=>r.provider_id))).filter(Boolean).sort(); const sel=$('khoProviderFilter'); sel.innerHTML='<option value="">— Tất cả nhà cung cấp —</option>'+providers.map(p=>`<option value="${p}">${p}</option>`).join(''); }catch(e){console.error('loadKhoProviders',e);} }
+    async function loadKhoProviders(){ try{ const resp=await fetch(API_BASE + '/kho/list'); if(!resp.ok) return; const arr=await resp.json(); const providers=Array.from(new Set(arr.map(r=>r.provider_id))).filter(Boolean).sort(); const sel=$('khoProviderFilter'); if(sel) sel.innerHTML='<option value="">— Tất cả nhà cung cấp —</option>'+providers.map(p=>`<option value="${p}">${p}</option>`).join(''); }catch(e){console.error('loadKhoProviders',e);} }
 
-    async function refreshKho(){ try{ const q=$('khoSearch').value.trim(); const provider=$('khoProviderFilter').value; const url=new URL(API_BASE + '/kho/list', location.origin); if(q) url.searchParams.append('search',q); if(provider) url.searchParams.append('provider_id',provider); const resp=await fetch(url.toString()); if(!resp.ok){ showToast('Không thể tải KHO'); return; } const arr=await resp.json(); const tbody=$('khoTbody'); tbody.innerHTML=''; arr.forEach(r=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td><input type="checkbox" data-key="${escapeHtml(r.key)}"></td><td>${escapeHtml(r.key)}</td><td>${escapeHtml(r.account)}</td><td>${escapeHtml(r.provider_id)}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.address)}</td><td class="text-end">${fmtCurrency(r.total)}</td><td>${r.nhapAt?new Date(r.nhapAt).toLocaleString():''}</td><td><button class="btn btn-outline-danger btn-sm kho-delete" data-key="${escapeHtml(r.key)}"><i class="bx bx-trash"></i></button></td>`; tbody.appendChild(tr); }); document.querySelectorAll('.kho-delete').forEach(btn=>btn.addEventListener('click', async e=>{ const key=e.currentTarget.dataset.key; if(!confirm('Xóa key '+key+' ?')) return; try{ const resp=await fetch(API_BASE + '/kho/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keys:[key]})}); const j=await resp.json(); showToast('Đã xóa: '+(j.removed||1)); await refreshKho(); }catch(err){console.error(err); showToast('Lỗi xóa'); } })); }catch(e){console.error('refreshKho',e); showToast('Lỗi tải KHO'); } }
+    async function refreshKho(){ try{ const q=$('khoSearch')?$('khoSearch').value.trim():''; const provider=$('khoProviderFilter')?$('khoProviderFilter').value:''; const url=new URL(API_BASE + '/kho/list', location.origin); if(q) url.searchParams.append('search',q); if(provider) url.searchParams.append('provider_id',provider); const resp=await fetch(url.toString()); if(!resp.ok){ showToast('Không thể tải KHO'); return; } const arr=await resp.json(); const tbody=$('khoTbody'); if(!tbody) return; tbody.innerHTML=''; arr.forEach(r=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td><input type="checkbox" data-key="${escapeHtml(r.key)}"></td><td>${escapeHtml(r.key)}</td><td>${escapeHtml(r.account)}</td><td>${escapeHtml(r.provider_id)}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.address)}</td><td class="text-end">${fmtCurrency(r.total)}</td><td>${r.nhapAt?new Date(r.nhapAt).toLocaleString():''}</td><td><button class="btn btn-outline-danger btn-sm kho-delete" data-key="${escapeHtml(r.key)}"><i class="bx bx-trash"></i></button></td>`; tbody.appendChild(tr); }); document.querySelectorAll('.kho-delete').forEach(btn=>btn.addEventListener('click', async e=>{ const key=e.currentTarget.dataset.key; if(!confirm('Xóa key '+key+' ?')) return; try{ const resp=await fetch(API_BASE + '/kho/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keys:[key]})}); const j=await resp.json(); showToast('Đã xóa: '+(j.removed||1)); await refreshKho(); }catch(err){console.error(err); showToast('Lỗi xóa'); } })); }catch(e){console.error('refreshKho',e); showToast('Lỗi tải KHO'); } }
 
-    async function refreshHistory(){ try{ const resp=await fetch(API_BASE + '/history?limit=200'); if(!resp.ok){ showToast('Không thể tải lịch sử'); return; } const arr=await resp.json(); const tbody=$('historyTbody'); tbody.innerHTML=''; arr.forEach(h=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${h.id}</td><td>${escapeHtml(h.key)}</td><td>${escapeHtml(h.account)}</td><td>${escapeHtml(h.provider_id)}</td><td>${escapeHtml(h.name)}</td><td>${escapeHtml(h.member_name||'')}</td><td class="text-end">${fmtCurrency(h.total)}</td><td>${h.soldAt?new Date(h.soldAt).toLocaleString():''}</td>`; tbody.appendChild(tr); }); }catch(e){console.error('refreshHistory',e); showToast('Lỗi tải lịch sử'); } }
+    async function refreshHistory(){ try{ const resp=await fetch(API_BASE + '/history?limit=200'); if(!resp.ok){ showToast('Không thể tải lịch sử'); return; } const arr=await resp.json(); const tbody=$('historyTbody'); if(!tbody) return; tbody.innerHTML=''; arr.forEach(h=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${h.id}</td><td>${escapeHtml(h.key)}</td><td>${escapeHtml(h.account)}</td><td>${escapeHtml(h.provider_id)}</td><td>${escapeHtml(h.name)}</td><td>${escapeHtml(h.member_name||'')}</td><td class="text-end">${fmtCurrency(h.total)}</td><td>${h.soldAt?new Date(h.soldAt).toLocaleString():''}</td>`; tbody.appendChild(tr); }); }catch(e){console.error('refreshHistory',e); showToast('Lỗi tải lịch sử'); } }
 
   </script>
 
