@@ -1,205 +1,257 @@
-/* style.css
-   Theme: Dashboard v13 - New Theme for "Tra cứu & Bán Bill"
-   Purpose: responsive, clean UI for lookup, KHO, members, selling, history
-   Notes: designed to work with Bootstrap base but override many styles for a modern look
-*/
+/* ======================= style.css (extended) =======================
+   Additions and refinements:
+   - More responsive rules
+   - Utility helpers (spacing, text truncation, badges, chips)
+   - Accessibility focus styles
+   - Animations for micro-interactions
+   - Table zebra, sticky footer, totals, RTL support tweaks
+   - Dark-theme scrollbar and form adjustments
+   - Print header/footer controls
+   - Money badge, status badges, tag chips
+   - Form validation visual helpers
+   - Mini components: avatar group, pill buttons, small controls
+   - Comments explain purpose for each block
+   =================================================================== */
 
-/* ================ 0. Base & Fonts ================ */
-:root{
-  --bg: #f8f9fa;
-  --card-bg: #fff;
-  --muted: #6c757d;
-  --accent: #0d6efd;
-  --danger: #dc3545;
-  --success: #198754;
-  --border: rgba(0,0,0,0.06);
-  --radius: 12px;
-  --shadow: 0 6px 18px rgba(16,24,40,0.06);
-  --shadow-2: 0 10px 30px rgba(16,24,40,0.08);
-  --glass: rgba(255,255,255,0.6);
-  --text: #212529;
-  --small: 0.85rem;
-  font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-}
+/* ===================== 10. Spacing & layout helpers ===================== */
+.u-gap-sm { gap: .5rem !important; }
+.u-gap { gap: 1rem !important; }
+.u-gap-lg { gap: 1.5rem !important; }
 
-/* Dark theme variables */
-[data-bs-theme="dark"]{
-  --bg: #0f1720;
-  --card-bg: #0f1720;
-  --muted: #9aa3b2;
-  --accent: #4f8cff;
-  --danger: #ff6b6b;
-  --success: #34d399;
-  --border: rgba(255,255,255,0.06);
-  --shadow: 0 6px 18px rgba(0,0,0,0.6);
-  --shadow-2: 0 10px 30px rgba(0,0,0,0.6);
-  --glass: rgba(255,255,255,0.03);
-  --text: #e6eef8;
-  --small: 0.85rem;
-}
+.px-1 { padding-left: .25rem !important; padding-right: .25rem !important; }
+.px-2 { padding-left: .5rem !important; padding-right: .5rem !important; }
+.px-3 { padding-left: .75rem !important; padding-right: .75rem !important; }
 
-/* Global */
-html,body {
-  height: 100%;
-  background: var(--bg);
-  color: var(--text);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  margin: 0;
-  padding: 0;
-}
-.container-fluid { max-width: 1320px; margin: 0 auto; padding: 1rem; }
+.m-0 { margin: 0 !important; }
+.mt-1 { margin-top: .25rem !important; }
+.mb-1 { margin-bottom: .25rem !important; }
+.mt-2 { margin-top: .5rem !important; }
+.mb-2 { margin-bottom: .5rem !important; }
 
-/* Links and icons */
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
+/* Flex utils */
+.row-inline { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }
+.center { display:flex; align-items:center; justify-content:center; }
 
-/* Utility small text */
-.small, .form-text, .form-label.small { font-size: var(--small); color: var(--muted); }
+/* ===================== 11. Typography helpers ===================== */
+.h1 { font-size:1.6rem; font-weight:700; }
+.h2 { font-size:1.25rem; font-weight:700; }
+.lead { font-size:1rem; color:var(--muted); }
 
-/* ================ 1. Header & Nav ================ */
-.navbar { background: var(--card-bg); border-bottom: 1px solid var(--border); box-shadow: var(--shadow); height: 64px; }
-.navbar .navbar-brand { font-weight: 700; font-size: 1.05rem; display: flex; gap: .5rem; align-items: center; }
-.navbar .navbar-text { color: var(--muted); font-size: .9rem; }
+.truncate-1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.truncate-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
-/* Avatar small */
-.avatar-sm { width: 34px; height: 34px; border-radius: 8px; object-fit: cover; }
+/* ===================== 12. Buttons / Pills / Badges ===================== */
+.btn-pill { border-radius: 999px; padding-left: .9rem; padding-right: .9rem; }
+.btn-sm.btn-pill { padding-left: .6rem; padding-right: .6rem; font-size: .85rem; }
 
-/* ================ 2. Controls area / Cards ================ */
-.controls-area .card {
-  border: none;
-  border-radius: var(--radius);
+.badge-status { display:inline-flex; align-items:center; gap:.4rem; padding:.25rem .5rem; border-radius:999px; font-weight:600; font-size:.78rem; }
+.badge-status .dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+
+/* status colors */
+.badge-success { background: rgba(25,135,84,0.08); color: var(--success); }
+.badge-success .dot { background: var(--success); }
+.badge-danger { background: rgba(220,53,69,0.08); color: var(--danger); }
+.badge-danger .dot { background: var(--danger); }
+.badge-warning { background: rgba(255,193,7,0.08); color: #b07a00; }
+.badge-info { background: rgba(13,110,253,0.08); color: var(--accent); }
+.badge-muted { background: rgba(0,0,0,0.03); color: var(--muted); }
+
+/* Tag chips */
+.chip { display:inline-flex; align-items:center; gap:.4rem; padding:.25rem .5rem; border-radius:999px; background: rgba(0,0,0,0.03); color:var(--muted); font-size:.82rem; }
+.chip .remove { cursor:pointer; opacity:.6; margin-left:.25rem; }
+
+/* Money badge for totals */
+.money-badge { display:inline-block; padding:.25rem .5rem; border-radius:8px; background: linear-gradient(90deg, rgba(13,110,253,0.08), rgba(79,140,255,0.04)); color: var(--accent); font-weight:700; }
+
+/* ===================== 13. Avatars & Avatar group ===================== */
+.avatar { display:inline-block; width:44px; height:44px; border-radius:8px; object-fit:cover; background:linear-gradient(180deg, rgba(0,0,0,0.03), rgba(255,255,255,0.02)); }
+.avatar-xs { width:28px; height:28px; border-radius:6px; }
+.avatar-group { display:flex; gap:-8px; align-items:center; }
+.avatar-group img { border:2px solid var(--card-bg); box-shadow: 0 1px 0 rgba(0,0,0,0.02); }
+
+/* ===================== 14. Form controls visual polish ===================== */
+.form-control, .form-select {
+  border-radius: 10px;
+  border: 1px solid var(--border);
   background: linear-gradient(180deg, rgba(255,255,255,0.98), var(--card-bg));
-  box-shadow: var(--shadow);
-  transition: transform .12s ease, box-shadow .12s ease;
+  transition: box-shadow .12s ease, border-color .12s ease, transform .08s ease;
 }
-.controls-area .card:hover { transform: translateY(-4px); box-shadow: var(--shadow-2); }
-.controls-area .card .card-header { font-weight: 600; background: transparent; border-bottom: 1px solid var(--border); padding: 0.6rem 1rem; }
-.controls-area .card .card-body { padding: 1rem; display: flex; flex-direction: column; gap: 0.6rem; }
-
-/* Controls sizing */
-.controls-area .form-control-sm, .controls-area .form-select-sm, .controls-area .btn-sm { font-size: .875rem; }
-
-/* Buttons */
-.btn { border-radius: 8px; }
-.btn-primary { background: linear-gradient(145deg, #0d6efd, #0a58ca); border: none; box-shadow: none; }
-.btn-outline-secondary { color: var(--text); border-color: var(--border); background: transparent; }
-
-/* Secondary text muted */
-.text-muted { color: var(--muted) !important; }
-
-/* ================ 3. Result header controls ================ */
-.result-controls-card .card { border-radius: var(--radius); box-shadow: var(--shadow); border: none; }
-.result-controls-card .input-group-text { background: transparent; border-right: 0; color: var(--muted); }
-.result-controls-card .form-control { border-left: 0; }
-
-/* Column toggle dropdown */
-.col-toggle summary { list-style: none; cursor: pointer; border-radius: 8px; padding: .35rem .6rem; display: inline-block; background: rgba(0,0,0,0.02); border: 1px solid var(--border); }
-.col-toggle[open] .col-options { display: block; }
-
-/* Col options */
-.col-options { display: none; position: absolute; background: var(--card-bg); border-radius: 8px; padding: .6rem; box-shadow: var(--shadow); z-index: 2000; min-width: 180px; border: 1px solid var(--border); }
-.col-options label { display: block; font-size: .9rem; margin-bottom: .35rem; color: var(--text); }
-
-/* Sort icon */
-.sort-icon { margin-left: .35rem; color: var(--muted); font-size: .85rem; }
-th.sorted-asc .sort-icon::after { content: '↑'; margin-left: .25rem; }
-th.sorted-desc .sort-icon::after { content: '↓'; margin-left: .25rem; }
-
-/* View toggle */
-.view-toggle .btn { min-width: 44px; }
-
-/* Pagination row */
-.pagination-row select { min-width: 90px; }
-
-/* ================ 4. Table Styles ================ */
-.table-wrap { border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border); }
-#resultTable { min-width: 1100px; border-collapse: collapse; }
-#resultTable th, #resultTable td { padding: .55rem .75rem; vertical-align: middle; border-bottom: 1px solid var(--border); font-size: .92rem; }
-#resultTable thead th { position: sticky; top: 0; z-index: 10; background: linear-gradient(180deg, rgba(255,255,255,0.98), var(--card-bg)); color: var(--muted); font-weight: 700; text-transform: none; }
-.table-hover > tbody > tr:hover > * { background: rgba(13,110,253,0.04); }
-
-/* Hidden column class */
-.hidden { display: none !important; }
-
-/* Footer style */
-#resultTable tfoot td { background: linear-gradient(180deg, rgba(0,0,0,0.01), transparent); font-weight: 700; }
-
-/* Checkbox align */
-.form-check-input { width: 18px; height: 18px; }
-
-/* Money styling */
-.money { font-weight: 700; color: var(--danger); }
-
-/* Responsive: make table scroll on small devices */
-@media (max-width: 900px) {
-  #resultTable { min-width: 900px; }
-  .controls-area .card { margin-bottom: .6rem; }
-  .controls-area .card .card-body { padding: .75rem; }
-  .controls-area .card .card-header { padding: .4rem .75rem; }
+.form-control:focus, .form-select:focus {
+  outline: none;
+  border-color: rgba(79,140,255,0.9);
+  box-shadow: 0 6px 18px rgba(79,140,255,0.06);
 }
 
-/* ================ 5. Grid (cards) ================ */
-.grid-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; padding: .25rem; }
-.grid-card { border-radius: 12px; overflow: hidden; }
-.grid-card .card-header { font-weight: 700; background: transparent; border-bottom: 1px solid var(--border); padding: .6rem .8rem; }
-.grid-card .card-body { padding: .8rem; }
-.grid-card .card-total { font-size: 1.1rem; font-weight: 800; color: var(--danger); margin-top: .25rem; }
+/* Input group compact */
+.input-group .form-control { border-right: 0; }
+.input-group .form-select { border-left: 0; }
 
-/* Card footer */
-.card .card-footer { background: transparent; border-top: none; padding-top: .45rem; color: var(--muted); }
-
-/* ================ 6. State / Empty / Loading ================ */
-.result-state-container { border-radius: var(--radius); padding: 2.2rem; border: 1px dashed var(--border); background: linear-gradient(180deg, rgba(255,255,255,0.6), transparent); }
-.result-state-container .state-icon { font-size: 3.2rem; color: var(--muted); }
-.result-state-container .state-message { margin-top: .75rem; font-size: 1.05rem; color: var(--muted); }
-
-/* Loading spinner inside buttons */
-.btn .spinner-border { display: none; }
-.btn.is-loading .spinner-border { display: inline-block !important; }
-.btn.is-loading .btn-text { display: none !important; }
-
-/* Toast/status */
-#status { position: fixed; right: 1rem; top: 80px; z-index: 3000; min-width: 260px; border-radius: 10px; }
-
-/* ================ 7. Modals ================ */
-.modal-content { border-radius: 12px; box-shadow: var(--shadow-2); border: none; }
-.modal-header, .modal-footer { border: none; }
-.list-group-item { border: none; border-bottom: 1px dashed var(--border); }
-
-/* Notes list meta */
-.note-meta { font-size: .8rem; color: var(--muted); }
-
-/* ================ 8. Utilities ================ */
-.d-none { display: none !important; }
-.flex-center { display:flex; align-items:center; justify-content:center; }
-.mt-auto { margin-top: auto !important; }
-
-/* Admin / user helpers */
-.admin-only { display: none !important; }
-.user-only { display: none !important; }
-body.is-admin .admin-only { display: inline-flex !important; }
-body.is-user .user-only { display: inline-flex !important; }
-
-/* scrollbar */
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 8px; }
-::-webkit-scrollbar-track { background: transparent; }
-
-/* small responsive tweaks */
-@media (max-width: 640px){
-  .controls-area .card .card-body { gap: .4rem; }
-  .grid-container { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
-  .navbar .navbar-brand { font-size: .98rem; }
+/* Validation visuals */
+.was-validated .form-control:invalid, .form-control.is-invalid {
+  border-color: rgba(220,53,69,0.9);
+  box-shadow: 0 6px 18px rgba(220,53,69,0.04);
+}
+.form-control.is-valid {
+  border-color: rgba(25,135,84,0.9);
+  box-shadow: 0 6px 18px rgba(25,135,84,0.04);
 }
 
-/* ================ 9. Print optimizations ================ */
+/* Floating labels thin helper */
+.floating-label { position:relative; }
+.floating-label input:focus + label, .floating-label input:not(:placeholder-shown) + label {
+  transform: translateY(-22px) scale(.85);
+  opacity: .95;
+  color: var(--muted);
+}
+
+/* ===================== 15. Micro-animations & interactions ===================== */
+@keyframes popIn { from { transform: scale(.98); opacity:0 } to { transform: scale(1); opacity:1 } }
+.animated-pop { animation: popIn .18s ease both; }
+.fade-in { animation: fadeIn .18s ease both; }
+@keyframes fadeIn { from { opacity:0 } to { opacity:1 } }
+
+/* Button hover lift */
+.btn:hover { transform: translateY(-2px); transition: transform .12s ease; }
+
+/* Tooltip-like help */
+.help-tip { position:relative; display:inline-block; cursor: help; }
+.help-tip .tip { display:none; position:absolute; left:50%; transform:translateX(-50%); bottom:calc(100% + 8px); background:var(--card-bg); color:var(--text); border:1px solid var(--border); padding:.45rem .6rem; border-radius:8px; box-shadow:var(--shadow); font-size:.85rem; white-space:nowrap; }
+.help-tip:hover .tip { display:block; }
+
+/* ===================== 16. Table enhancements ===================== */
+/* zebra rows */
+#resultTable tbody tr:nth-child(odd) { background: linear-gradient(180deg, rgba(0,0,0,0.01), transparent); }
+
+/* sticky totals footer */
+#resultTable tfoot { position: sticky; bottom: 0; z-index: 5; }
+
+/* row actions */
+.row-actions { display:flex; gap:.35rem; align-items:center; }
+
+/* column hide helper (toggle by checkbox in col-options) */
+.col-hidden { display:none !important; }
+
+/* sortable column cursor */
+th[data-sort] { cursor: pointer; user-select:none; }
+
+/* selectable row highlight */
+#resultTable tbody tr.selected { background: rgba(79,140,255,0.06) !important; }
+
+/* small inline badges inside table */
+.table .cell-badge { display:inline-block; padding:.18rem .4rem; border-radius:6px; font-size:.78rem; }
+
+/* ===================== 17. Grid card refinements ===================== */
+.grid-card .meta { display:flex; justify-content:space-between; gap:.5rem; align-items:center; font-size:.86rem; color:var(--muted); }
+.grid-card .meta .tags { display:flex; gap:.4rem; flex-wrap:wrap; }
+
+/* action overlay on hover */
+.grid-card .card-body { position:relative; transition: transform .12s ease; }
+.grid-card:hover .card-body { transform: translateY(-6px); }
+
+/* ===================== 18. Empty / placeholder visuals ===================== */
+.placeholder-hero { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.8rem; padding:2rem; border-radius:12px; background: linear-gradient(180deg, rgba(255,255,255,0.6), transparent); border:1px dashed var(--border); }
+.placeholder-hero .icon { font-size:2.6rem; color:var(--muted); }
+.placeholder-hero .hint { color:var(--muted); font-size:.98rem; }
+
+/* ===================== 19. Accessibility: focus outlines ===================== */
+:focus { outline: none; }
+a:focus, button:focus, input:focus, select:focus, textarea:focus {
+  box-shadow: 0 0 0 4px rgba(79,140,255,0.12);
+  border-radius: 8px;
+}
+
+/* High-contrast mode */
+@media (prefers-contrast: more) {
+  :root { --border: rgba(0,0,0,0.15); --shadow: none; --shadow-2: none; }
+  .btn { box-shadow: none; border: 1px solid var(--border); }
+}
+
+/* ===================== 20. Responsive reflow & mobile UX ===================== */
+@media (max-width: 1100px) {
+  .main-container { padding: 12px; }
+  .controls-area .card { min-height: 200px; }
+  .grid-container { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+  .col-options { min-width: 160px; right: 12px; left: auto; }
+}
+@media (max-width: 700px) {
+  .navbar .navbar-brand { font-size: .95rem; }
+  .controls-area .card { min-height: 160px; }
+  .table-responsive { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .chip { font-size: .78rem; padding:.2rem .4rem; }
+}
+
+/* ===================== 21. Dark theme tweaks ===================== */
+[data-bs-theme="dark"] .col-options { background: #0f1720; border-color: rgba(255,255,255,0.04); }
+[data-bs-theme="dark"] .placeholder-hero { background: rgba(255,255,255,0.02); }
+[data-bs-theme="dark"] ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); }
+
+/* form control backgrounds for dark */
+[data-bs-theme="dark"] .form-control, [data-bs-theme="dark"] .form-select {
+  background: rgba(255,255,255,0.02);
+  border-color: rgba(255,255,255,0.04);
+  color: var(--text);
+}
+
+/* ===================== 22. Print footers and header for reports ===================== */
 @media print {
-  body { background: #fff; color: #000; }
-  .controls-area, .navbar, .modal { display: none !important; }
-  #resultTable { border: 1px solid #ddd; }
-  #resultTable thead th { position: static; }
-  #resultTable tfoot td { position: static; }
+  .print-hide { display:none !important; }
+  .print-page-header { display:block; position:fixed; top:0; left:0; right:0; background:white; padding:8px 16px; border-bottom:1px solid #ddd; }
+  .print-page-footer { display:block; position:fixed; bottom:0; left:0; right:0; background:white; padding:8px 16px; border-top:1px solid #ddd; font-size:.85rem; color:#666; }
 }
 
-/* ================ End of style.css ================ */
+/* ===================== 23. RTL support small fixes ===================== */
+[dir="rtl"] .avatar-group { gap:-8px; direction: rtl; }
+[dir="rtl"] .input-group .form-control { border-right: 0; border-left: 1px solid var(--border); }
+
+/* ===================== 24. Advanced helpers: CSS grid for layouts ===================== */
+.layout-grid {
+  display:grid;
+  grid-template-columns: 1fr 360px;
+  gap: 1rem;
+}
+@media (max-width: 1000px) { .layout-grid { grid-template-columns: 1fr; } }
+
+/* ===================== 25. Helper for large SQL/code blocks ===================== */
+pre.sql-block {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", "Courier New", monospace;
+  font-size: .85rem;
+  background: linear-gradient(180deg, rgba(0,0,0,0.02), transparent);
+  border: 1px solid var(--border);
+  padding: .8rem; border-radius:8px; overflow:auto;
+}
+
+/* ===================== 26. Sticky action bar (bottom-right) ===================== */
+.sticky-actions {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  display:flex;
+  gap:.6rem;
+  align-items:center;
+  z-index: 1200;
+}
+.sticky-actions .btn { box-shadow: var(--shadow); }
+
+/* ===================== 27. Tiny notification bubble for realtime updates ===================== */
+.realtime-badge {
+  position: relative;
+}
+.realtime-badge .count {
+  position: absolute; top:-8px; right:-8px; background:var(--danger); color:white; font-size:.65rem; padding:.18rem .4rem; border-radius:999px; font-weight:700;
+}
+
+/* ===================== 28. Data table loading skeletons ===================== */
+.table-skeleton {
+  display:grid;
+  gap:.5rem;
+}
+.table-skeleton .row { height: 16px; background: linear-gradient(90deg, rgba(0,0,0,0.04), rgba(0,0,0,0.02)); border-radius:6px; }
+
+/* ===================== 29. Developer debug helpers (toggle with body.debug) ===================== */
+body.debug * { outline: 1px dashed rgba(255,0,0,0.06); }
+.debug-banner { position:fixed; left:12px; bottom:12px; background:rgba(255,0,0,0.08); color:#900; padding:.35rem .6rem; border-radius:6px; font-weight:700; z-index:2000; }
+
+/* ===================== 30. End notes ===================== */
+/* This extended stylesheet focuses on UX polish, accessibility, responsive behavior,
+   and a set of small components used across the app UI. Tweak color variables at the top
+   to adapt branding. Remove or disable debug and print helpers before production if desired. */

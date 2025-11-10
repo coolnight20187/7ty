@@ -8,10 +8,14 @@
     "dev": "ts-node-dev --respawn --transpile-only --no-notify --ignore-watch node_modules server.ts",
     "start": "node dist/server.js",
     "build": "tsc -p tsconfig.json",
+    "migrate": "node scripts/migrate.js",
+    "seed:admin": "node scripts/seed_admin.js",
+    "check-env": "node scripts/check-env.js",
     "lint": "eslint . --ext .ts,.js",
     "format": "prettier --write \"**/*.{ts,js,json,css,md,html}\"",
     "clean": "rimraf dist .cache",
-    "prepare": "husky install"
+    "prepare": "husky install",
+    "test": "echo \"No tests configured\" && exit 0"
   },
   "keywords": [
     "bill",
@@ -34,7 +38,9 @@
     "helmet": "^7.1.0",
     "morgan": "^1.10.0",
     "node-fetch": "^3.3.2",
-    "p-limit": "^3.1.0"
+    "p-limit": "^3.1.0",
+    "pg": "^8.10.0",
+    "bcrypt": "^5.1.0"
   },
   "devDependencies": {
     "@netlify/functions": "^5.1.0",
@@ -50,7 +56,8 @@
     "rimraf": "^5.0.0",
     "ts-node": "^10.9.1",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.4.2"
+    "typescript": "^5.4.2",
+    "cross-env": "^7.0.3"
   },
   "engines": {
     "node": ">=18"

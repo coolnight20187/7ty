@@ -16,10 +16,26 @@
   <!-- Boxicons -->
   <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet" />
 
-  <!-- App styles -->
+  <!-- Optional app styles -->
   <link rel="stylesheet" href="style.css" />
 
   <meta name="description" content="Tra cứu hóa đơn điện hàng loạt, quản lý KHO, bán bill. Giao tiếp duy nhất với CheckBill Pro (bill.7ty.vn)." />
+  <style>
+    body { font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; }
+    .main-container { padding: 20px 16px; max-width: 1400px; margin: 0 auto; }
+    .controls-area .card { min-height: 240px; }
+    .results-table { max-height: 420px; overflow:auto; }
+    .btn-text { display:inline-block; }
+    .spinner-border[role="status"] { width:1rem; height:1rem; }
+    .fixed-footer { position: fixed; bottom: 12px; right: 12px; z-index: 1050; }
+    .col-options label { display:block; margin-bottom:6px; }
+    details.col-toggle summary { cursor:pointer; }
+    .admin-only { display:none; } /* can be toggled client-side when user is admin */
+    .table-wrap { border-radius:6px; }
+    .grid-container { display:grid; grid-template-columns: repeat(auto-fill,minmax(220px,1fr)); gap:12px; }
+    .card.shadow-sm { border-radius:8px; }
+    .result-state-container { border:1px dashed #ddd; border-radius:8px; }
+  </style>
 </head>
 <body class="bg-body-tertiary">
 
@@ -46,12 +62,12 @@
               <label class="form-check-label" for="rememberMeCheckbox">Ghi nhớ đăng nhập</label>
             </div>
             <div class="d-grid">
-              <button type="submit" class="btn btn-primary d-flex align-items-center justify-content-center">
+              <button type="submit" id="loginSubmitBtn" class="btn btn-primary d-flex align-items-center justify-content-center">
                 <span class="btn-text">Đăng nhập</span>
-                <div class="spinner-border spinner-border-sm ms-2 d-none" role="status"></div>
+                <div class="spinner-border spinner-border-sm ms-2 d-none" role="status" id="loginSpinner"></div>
               </button>
             </div>
-            <p class="text-muted small mt-2 text-center">Chế độ dev: bật SKIP_AUTH=true để bỏ qua đăng nhập</p>
+            <p class="text-muted small mt-2 text-center">Chế độ dev: bật <code>SKIP_AUTH=true</code> để bỏ qua đăng nhập</p>
           </form>
         </div>
       </div>
@@ -152,9 +168,9 @@
                 </div>
                 <select id="employeeSelect" class="form-select form-select-sm mb-2" size="5"></select>
                 <div class="d-flex gap-2">
-                  <button id="addEmployeeBtn" class="btn btn-success btn-sm admin-only d-none"><i class="bx bx-user-plus"></i></button>
-                  <button id="editEmployeeBtn" class="btn btn-warning btn-sm admin-only d-none"><i class="bx bx-edit"></i></button>
-                  <button id="deleteEmployeeBtn" class="btn btn-danger btn-sm admin-only d-none"><i class="bx bx-trash"></i></button>
+                  <button id="addEmployeeBtn" class="btn btn-success btn-sm admin-only d-none" title="Thêm nhân viên"><i class="bx bx-user-plus"></i></button>
+                  <button id="editEmployeeBtn" class="btn btn-warning btn-sm admin-only d-none" title="Sửa nhân viên"><i class="bx bx-edit"></i></button>
+                  <button id="deleteEmployeeBtn" class="btn btn-danger btn-sm admin-only d-none" title="Xóa nhân viên"><i class="bx bx-trash"></i></button>
                 </div>
                 <hr />
                 <button id="viewNotesBtn" class="btn btn-outline-secondary btn-sm mt-auto"><i class="bx bx-note"></i> Ghi chú NV</button>
@@ -254,6 +270,40 @@
               </div>
             </div>
 
+            <div class="table-responsive" style="max-height:520px;overflow:auto;">
+              <table id="mainResultsTable" class="table table-hover table-sm align-middle">
+                <thead class="table-light">
+                  <tr>
+                    <th style="width:36px"><input id="selectAllMain" type="checkbox" /></th>
+                    <th>STT</th>
+                    <th>Key</th>
+                    <th>Account</th>
+                    <th>Provider</th>
+                    <th>Họ và tên</th>
+                    <th>Địa chỉ</th>
+                    <th class="text-end">Kỳ này</th>
+                    <th class="text-end">Tổng</th>
+                    <th>NhậpAt</th>
+                    <th>Xóa</th>
+                  </tr>
+                </thead>
+                <tbody id="mainResultsTbody"></tbody>
+              </table>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Small action row -->
+        <div class="d-flex gap-2 mb-3">
+          <button id="importAllBtn" class="btn btn-outline-primary btn-sm">Nhập tất cả vào KHO</button>
+          <button id="removeSelectedBtn" class="btn btn-outline-danger btn-sm">Xóa chọn</button>
+          <div class="ms-auto text-muted small" id="resultsCount">0 mục</div>
+        </div>
+
+        <!-- Pagination & view containers (Part 3) -->
+        <div class="card shadow-sm mb-3">
+          <div class="card-body">
             <div class="row g-2 align-items-center justify-content-end pagination-row">
               <div class="col-auto">
                 <label for="rowsPerPage" class="col-form-label col-form-label-sm">Hiển thị</label>
@@ -385,36 +435,131 @@
     </div>
   </div>
 
-  <!-- Scripts -->
-  <script src="xlsx.full.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
-  <script src="app.js" defer></script>
+  <!-- Toast area -->
+  <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 1100">
+    <div id="appToast" class="toast align-items-center text-bg-dark border-0" role="alert" aria-live="assertive" aria-atomic="true">
+      <div class="d-flex">
+        <div class="toast-body" id="appToastBody">...</div>
+        <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+      </div>
+    </div>
+  </div>
 
+  <!-- Floating help / version -->
+  <div class="fixed-footer">
+    <button id="openHelpBtn" class="btn btn-sm btn-light shadow-sm"><i class="bx bx-info-circle"></i> Trợ giúp</button>
+  </div>
+
+  <!-- Optional libs -->
+  <!-- Put xlsx.full.min.js in public/ or use CDN as needed -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+
+  <!-- Inline client script (can be moved to app.js) -->
   <script>
-    // Theme helper (small)
-    (function () {
-      const THEME_KEY = 'bs-theme';
-      const set = (v) => localStorage.setItem(THEME_KEY, v);
-      const get = () => localStorage.getItem(THEME_KEY) || 'auto';
-      const apply = (v) => {
-        let theme = v;
-        if (v === 'auto') {
-          theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-        }
-        document.documentElement.setAttribute('data-bs-theme', theme);
-      };
-      apply(get());
-      document.querySelectorAll('[data-bs-theme-value]').forEach((el) => {
-        el.addEventListener('click', (e) => {
-          e.preventDefault();
-          const v = el.getAttribute('data-bs-theme-value');
-          set(v);
-          apply(v);
-          document.querySelectorAll('[data-bs-theme-value].active').forEach(a => a.classList.remove('active'));
-          el.classList.add('active');
-        });
-      });
-    })();
+    const API_BASE = '/api';
+
+    function $(id){ return document.getElementById(id); }
+    function showToast(msg, delay=3000){ const tb=$('appToastBody'); tb.textContent=msg; const t=bootstrap.Toast.getOrCreateInstance($('appToast')); t.show(); if(delay) setTimeout(()=>t.hide(),delay); }
+    function fmtCurrency(v){ try{return Number(v).toLocaleString('vi-VN')+' ₫';}catch{return v;} }
+    function toggleSpinner(el, on=true){ const s=el.querySelector('.spinner-border'); if(!s) return; s.classList.toggle('d-none', !on); }
+
+    let results = [], members = [], employees = [];
+
+    const loginModal = new bootstrap.Modal($('loginModal'));
+    const khoModal = new bootstrap.Modal($('khoModal'));
+    const historyModal = new bootstrap.Modal($('historyModal'));
+    const employeeModal = new bootstrap.Modal($('employeeModal'));
+    const notesModal = new bootstrap.Modal($('notesModal'));
+
+    document.addEventListener('DOMContentLoaded', async () => {
+      try{
+        const h = await fetch(API_BASE + '/health');
+        if(h.ok){
+          const m = await fetch(API_BASE + '/members');
+          if(m.status === 401) loginModal.show(); else initApp();
+        } else initApp();
+      }catch(e){ initApp(); }
+    });
+
+    async function initApp(){
+      $('appHeader').classList.remove('d-none'); $('appContent').classList.remove('d-none');
+      bindControls(); await loadMembers(); await loadEmployees(); await loadKhoProviders(); renderMainResults();
+    }
+
+    function bindControls(){
+      $('filterDupBtn').addEventListener('click', ()=>{ const lines=$('accounts').value.split(/\\r?\\n/).map(s=>s.trim()).filter(Boolean); $('accounts').value=Array.from(new Set(lines)).join('\\n'); showToast('Đã loại bỏ trùng'); });
+      $('lookupBulkBtn').addEventListener('click', lookupBulk);
+      $('importAllBtn').addEventListener('click', importAllResults);
+      $('removeSelectedBtn').addEventListener('click', removeSelectedResults);
+      $('khoListBtn').addEventListener('click', async ()=>{ await refreshKho(); khoModal.show(); });
+      $('khoRefreshBtn').addEventListener('click', async ()=>{ await refreshKho(); showToast('Đã tải KHO'); });
+      $('khoImportBtn').addEventListener('click', importAllResults);
+      $('khoRemoveBtn').addEventListener('click', async ()=>{ const keys=prompt('Nhập key, ngăn cách bởi dấu phẩy'); if(!keys) return; const arr=keys.split(',').map(s=>s.trim()).filter(Boolean); await fetch(API_BASE + '/kho/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keys:arr})}); showToast('Gửi yêu cầu xóa'); });
+      $('historyBtn').addEventListener('click', async ()=>{ await refreshHistory(); historyModal.show(); });
+      $('historyRefreshBtn')?.addEventListener('click', async ()=>{ await refreshHistory(); showToast('Đã tải lịch sử'); });
+      $('historyExportCsvBtn')?.addEventListener('click', ()=>{ window.location.href = API_BASE + '/history?export=csv'; });
+
+      $('copyBtn').addEventListener('click', async ()=>{ try{ const trs=Array.from(document.querySelectorAll('#mainResultsTbody tr')); if(!trs.length){ showToast('Không có dữ liệu'); return;} const txt=trs.map(tr=>Array.from(tr.querySelectorAll('td')).map(td=>td.textContent.trim()).join('\\t')).join('\\n'); await navigator.clipboard.writeText(txt); showToast('Đã sao chép'); }catch(e){ showToast('Không thể sao chép'); } });
+
+      $('exportCsvBtn').addEventListener('click', ()=>{ const cols=['stt','key','account','provider','name','address','amount_current','total','nhapAt']; const rows=results.map((r,i)=>[i+1,r.key,r.account,r.provider_id,r.name,r.address,r.amount_current,r.total,r.nhapAt||'']); const csv=[cols.join(',')].concat(rows.map(r=>r.map(c=> (c==null?'':('"'+String(c).replace(/"/g,'""')+'"'))).join(','))).join('\\r\\n'); const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='results.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); });
+
+      $('selectAllMain')?.addEventListener('change', (e)=>{ const checked=e.target.checked; document.querySelectorAll('#mainResultsTbody input[type="checkbox"]').forEach(cb=>cb.checked=checked); });
+
+      $('loginForm').addEventListener('submit', (ev)=>{ ev.preventDefault(); loginModal.hide(); initApp(); showToast('Đăng nhập (tạm)'); });
+
+      $('sellBtn')?.addEventListener('click', async (e)=>{ const btn=e.currentTarget; toggleSpinner(btn,true); try{ const memberId=$('memberSelect').value; if(!memberId){ showToast('Chọn member'); return; } const from=Number($('targetFrom').value||0); const to=Number($('targetTo').value||0); const url=new URL(API_BASE + '/kho/list', location.origin); if(from) url.searchParams.append('fromAmount', from); if(to) url.searchParams.append('toAmount', to); const resp=await fetch(url.toString()); const arr=resp.ok?await resp.json():[]; if(!arr.length){ showToast('Không có bill'); return; } if(!confirm('Xác nhận bán '+arr.length+' mục?')) return; const keys=arr.map(x=>x.key); const s=await fetch(API_BASE + '/sell',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({member_id: memberId, keys})}); const j=await s.json(); showToast('Đã bán: '+(j.sold_count||0)); await refreshKho(); await refreshHistory(); }catch(err){console.error(err); showToast('Lỗi khi bán')} finally{ toggleSpinner(btn,false);} });
+
+      $('employeeSearchBtn').addEventListener('click', ()=>{ const q=$('employeeSearchInput').value.trim().toLowerCase(); const sel=$('employeeSelect'); sel.innerHTML=''; employees.filter(e=> (e.username||'').toLowerCase().includes(q) || (e.full_name||'').toLowerCase().includes(q)).forEach(emp=>{ const opt=document.createElement('option'); opt.value=emp.id; opt.textContent=(emp.full_name||emp.username)+' • '+(emp.role||'user'); sel.appendChild(opt); }); });
+
+      $('memberSearch').addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ const q=$('memberSearch').value.trim().toLowerCase(); const sel=$('memberSelect'); sel.innerHTML='<option value="">— Chọn thành viên —</option>'+members.filter(m=> (m.name||'').toLowerCase().includes(q)).map(m=>`<option value="${m.id}">${m.name}</option>`).join(''); } });
+
+      $('openHelpBtn').addEventListener('click', ()=>{ alert('Trợ giúp:\\n- Tra cứu -> Nhập kết quả vào KHO -> Mở KHO để quản lý -> Bán để chuyển sang Lịch sử.\\n- Cấu hình API tại server, kiểm tra SKIP_AUTH cho dev.'); });
+    }
+
+    async function lookupBulk(){
+      const btn=$('lookupBulkBtn'); toggleSpinner(btn,true);
+      try{
+        const sku=$('provider').value; const accounts=$('accounts').value.split(/\\r?\\n/).map(s=>s.trim()).filter(Boolean);
+        if(!accounts.length){ showToast('Nhập ít nhất 1 mã'); return; }
+        const resp=await fetch(API_BASE + '/check-electricity/bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sku,contract_numbers:accounts})});
+        if(!resp.ok){ const e=await resp.json().catch(()=>({error:'Upstream'})); showToast('Lỗi: '+(e.error||resp.status)); return; }
+        const data=await resp.json();
+        results = data.map((r,i)=>{ const n=r.normalized||{}; return { key: n.key||`${sku}::${accounts[i]}`, ok:r.ok, account:accounts[i], provider_id:sku, name:n.name||'', address:n.address||'', amount_current: Number(n.amount_current||0), total: Number(n.total||n.amount_current||0), nhapAt: n.created_at||null, raw: r.raw||null }; });
+        renderMainResults(); showToast('Tra cứu hoàn tất: '+results.length+' mục');
+      }catch(e){ console.error(e); showToast('Lỗi tra cứu'); } finally{ toggleSpinner(btn,false); }
+    }
+
+    async function importAllResults(){
+      if(!results.length){ showToast('Không có kết quả'); return; }
+      const items=results.map(r=>({ key:r.key, account:r.account, provider_id:r.provider_id, name:r.name, address:r.address, amount_current:r.amount_current, total:r.total, raw:r.raw }));
+      try{ const resp=await fetch(API_BASE + '/kho/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bills:items})}); const j=await resp.json(); showToast('Nhập: '+(j.count||j.added||items.length)); }catch(e){console.error(e); showToast('Lỗi import');}
+    }
+
+    function removeSelectedResults(){ const keys=Array.from(document.querySelectorAll('#mainResultsTbody input[type="checkbox"]:checked')).map(cb=>cb.dataset.key); if(!keys.length){ showToast('Chọn ít nhất 1 mục'); return;} results=results.filter(r=>!keys.includes(r.key)); renderMainResults(); showToast('Đã xóa khỏi danh sách'); }
+
+    function renderMainResults(){
+      const tbody=$('mainResultsTbody'); tbody.innerHTML=''; const q=$('searchInput').value.trim().toLowerCase(); const hideZero=$('hideZeroToggle').checked;
+      const visible=results.filter((r)=>{ if(hideZero && (Number(r.total||r.amount_current||0)===0)) return false; if(!q) return true; return ((r.name||'')+' '+(r.address||'')+' '+(r.account||'')+' '+(r.key||'')).toLowerCase().includes(q); });
+      visible.forEach((r,idx)=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td><input type="checkbox" data-key="${escapeHtml(r.key)}"></td><td>${idx+1}</td><td>${escapeHtml(r.key)}</td><td>${escapeHtml(r.account)}</td><td>${escapeHtml(r.provider_id)}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.address)}</td><td class="text-end">${fmtCurrency(r.amount_current||r.total)}</td><td class="text-end">${fmtCurrency(r.total||r.amount_current)}</td><td>${r.nhapAt?new Date(r.nhapAt).toLocaleString():''}</td><td><button class="btn btn-sm btn-danger row-remove" data-key="${escapeHtml(r.key)}"><i class="bx bx-trash"></i></button></td>`; tbody.appendChild(tr); });
+      document.querySelectorAll('.row-remove').forEach(b=>b.addEventListener('click', e=>{ const k=e.currentTarget.dataset.key; results=results.filter(x=>x.key!==k); renderMainResults(); showToast('Đã xóa'); }));
+      $('resultsCount').textContent=visible.length+' mục (tổng '+results.length+')';
+    }
+
+    function escapeHtml(s){ if(s==null) return ''; return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+    async function loadMembers(){ try{ const resp=await fetch(API_BASE + '/members'); if(!resp.ok) return; members=await resp.json(); const sel=$('memberSelect'); sel.innerHTML='<option value="">— Chọn thành viên —</option>'+members.map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join(''); }catch(e){console.error('loadMembers',e);} }
+
+    async function loadEmployees(){ try{ const resp=await fetch(API_BASE + '/members'); if(resp.ok){ employees=[]; document.querySelectorAll('.admin-only').forEach(el=>el.classList.remove('d-none')); } }catch(e){console.error(e);} }
+
+    async function loadKhoProviders(){ try{ const resp=await fetch(API_BASE + '/kho/list'); if(!resp.ok) return; const arr=await resp.json(); const providers=Array.from(new Set(arr.map(r=>r.provider_id))).filter(Boolean).sort(); const sel=$('khoProviderFilter'); sel.innerHTML='<option value="">— Tất cả nhà cung cấp —</option>'+providers.map(p=>`<option value="${p}">${p}</option>`).join(''); }catch(e){console.error('loadKhoProviders',e);} }
+
+    async function refreshKho(){ try{ const q=$('khoSearch').value.trim(); const provider=$('khoProviderFilter').value; const url=new URL(API_BASE + '/kho/list', location.origin); if(q) url.searchParams.append('search',q); if(provider) url.searchParams.append('provider_id',provider); const resp=await fetch(url.toString()); if(!resp.ok){ showToast('Không thể tải KHO'); return; } const arr=await resp.json(); const tbody=$('khoTbody'); tbody.innerHTML=''; arr.forEach(r=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td><input type="checkbox" data-key="${escapeHtml(r.key)}"></td><td>${escapeHtml(r.key)}</td><td>${escapeHtml(r.account)}</td><td>${escapeHtml(r.provider_id)}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.address)}</td><td class="text-end">${fmtCurrency(r.total)}</td><td>${r.nhapAt?new Date(r.nhapAt).toLocaleString():''}</td><td><button class="btn btn-outline-danger btn-sm kho-delete" data-key="${escapeHtml(r.key)}"><i class="bx bx-trash"></i></button></td>`; tbody.appendChild(tr); }); document.querySelectorAll('.kho-delete').forEach(btn=>btn.addEventListener('click', async e=>{ const key=e.currentTarget.dataset.key; if(!confirm('Xóa key '+key+' ?')) return; try{ const resp=await fetch(API_BASE + '/kho/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keys:[key]})}); const j=await resp.json(); showToast('Đã xóa: '+(j.removed||1)); await refreshKho(); }catch(err){console.error(err); showToast('Lỗi xóa'); } })); }catch(e){console.error('refreshKho',e); showToast('Lỗi tải KHO'); } }
+
+    async function refreshHistory(){ try{ const resp=await fetch(API_BASE + '/history?limit=200'); if(!resp.ok){ showToast('Không thể tải lịch sử'); return; } const arr=await resp.json(); const tbody=$('historyTbody'); tbody.innerHTML=''; arr.forEach(h=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${h.id}</td><td>${escapeHtml(h.key)}</td><td>${escapeHtml(h.account)}</td><td>${escapeHtml(h.provider_id)}</td><td>${escapeHtml(h.name)}</td><td>${escapeHtml(h.member_name||'')}</td><td class="text-end">${fmtCurrency(h.total)}</td><td>${h.soldAt?new Date(h.soldAt).toLocaleString():''}</td>`; tbody.appendChild(tr); }); }catch(e){console.error('refreshHistory',e); showToast('Lỗi tải lịch sử'); } }
+
   </script>
+
+  <!-- If you want to extract JS into app.js, move the script there and include with defer -->
 </body>
 </html>

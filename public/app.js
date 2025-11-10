@@ -1,62 +1,66 @@
 /* public/app.js
-   Client-side application logic for "Tra cứu & Bán Bill"
-   - Works with server endpoints:
-     - POST /api/check-electricity/bulk  (bulk lookup to CheckBill Pro)
-     - POST /api/kho/import
-     - GET  /api/kho/list
-     - POST /api/kho/remove
-     - POST /api/sell
-     - GET  /api/history
-     - GET  /api/export-excel
-     - GET  /api/members, POST /api/members, PUT /api/members/:id
-   - Provides:
-     - Bulk lookup, de-dup, normalize upstream responses
-     - Render list + grid views, pagination, sorting, column toggles
-     - KHO import, list, remove
-     - Pick by target, sell, history
-     - Export & copy
-   - Notes: keep DOM element ids in sync with public/index.html
+   Complete client-side application logic for "Tra cứu & Bán Bill"
+   Combined from user-provided parts 1-4 and extended for robustness.
+   Responsibilities:
+   - Bulk lookup (/api/check-electricity/bulk)
+   - KHO import/list/remove (/api/kho/*)
+   - Sell (/api/sell)
+   - History (/api/history)
+   - Members CRUD (/api/members)
+   - Export / copy / pagination / sorting / column toggles / list & grid views
+   Notes:
+   - Keep index.html and style.css element IDs in sync with this script.
+   - Expected server endpoints under /api/*.
 */
 
 document.addEventListener('DOMContentLoaded', () => {
-  // --- Utility helpers ---
+  // --- Utilities ---
   const $ = id => document.getElementById(id);
-  const cls = (el, c, on = true) => el.classList[on ? 'add' : 'remove'](c);
-  const toNumber = v => Number((v ?? '').toString().replace(/[^\d.-]/g, '')) || 0;
+  const cls = (el, c, on = true) => el && el.classList[on ? 'add' : 'remove'](c);
   const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const toNumber = v => Number((v ?? '').toString().replace(/[^\d.-]/g, '')) || 0;
 
-  // Money formatting (VND)
-  function fmtMoney(v) {
-    const n = toNumber(v);
-    if (n === 0) return '0 ₫';
-    return n.toLocaleString('vi-VN') + ' ₫';
-  }
-  // Date formatting helper
-  function fmtDate(iso) {
-    if (!iso) return '';
-    try {
-      const d = new Date(iso);
-      return d.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-    } catch { return iso; }
-  }
-
-  // Parse number in upstream which may return amounts in plain number (VND)
   function safeAmount(v) {
     if (v === undefined || v === null) return 0;
     const n = Number(v);
     return Number.isFinite(n) ? n : parseInt((v + '').replace(/\D/g, ''), 10) || 0;
   }
 
+  function fmtMoney(v) {
+    const n = toNumber(v);
+    if (!Number.isFinite(n) || n === 0) return '0 ₫';
+    return n.toLocaleString('vi-VN') + ' ₫';
+  }
+
+  function fmtDate(iso) {
+    if (!iso) return '';
+    try {
+      const d = new Date(iso);
+      return d.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return iso;
+    }
+  }
+
+  function jsonSafe(obj) {
+    try { return JSON.stringify(obj); } catch { return String(obj); }
+  }
+
+  function escapeHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+  }
+
   // --- State ---
   let currentUser = null;
-  let allRows = [];        // original data array (objects normalized)
-  let filteredRows = [];   // rows after filter/search/hideZero
-  let displayMode = 'list';// or 'grid'
+  let allRows = [];        // canonical normalized rows (source of truth)
+  let filteredRows = [];   // rows after search/hideZero
+  let displayMode = 'list';// 'list' or 'grid'
   let sortKey = 'index';
   let sortDir = 1;         // 1 asc or -1 desc
   let pagination = { rowsPerPage: 15, currentPage: 1 };
 
-  // --- Elements ---
+  // --- DOM elements ---
   const providerEl = $('provider');
   const accountsEl = $('accounts');
   const filterDupBtn = $('filterDupBtn');
@@ -107,20 +111,9 @@ document.addEventListener('DOMContentLoaded', () => {
     el.className = 'alert ' + (type === 'warn' ? 'alert-danger' : 'alert-success') + ' shadow-sm';
     el.classList.remove('d-none');
     clearTimeout(el._timer);
-    el._timer = setTimeout(() => el.classList.add('d-none'), 3500);
+    el._timer = setTimeout(() => el.classList.add('d-none'), 3000);
   }
-  function showLoadingState(msg) {
-    if (!resultState) return;
-    resultState.innerHTML = `<div class="spinner-border text-primary" role="status" style="width:3rem;height:3rem"><span class="visually-hidden">Loading</span></div><p class="h5 mt-3">${msg}</p>`;
-    resultState.classList.remove('d-none');
-    listContainer.classList.add('d-none');
-    gridContainer.classList.add('d-none');
-  }
-  function hideResultState() {
-    if (!resultState) return;
-    resultState.classList.add('d-none');
-    resultState.innerHTML = '';
-  }
+
   function setButtonLoading(btn, loading) {
     if (!btn) return;
     if (loading) {
@@ -132,26 +125,175 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // --- Normalize server-side normalized shape or upstream raw shape ---
-  // server returns normalized object in `normalized` property for bulk calls, but we tolerate raw shapes too
-  function normalizeRow(item) {
-    // possible shapes:
-    // - item.normalized (from server bulk): has keys: key, provider_id, account, name, address, amount_current, total, amount_previous, raw
-    // - item: own raw from server-side fallback or legacy server.js
-    if (!item) return null;
-    if (item.normalized) return item.normalized;
-    const keys = ['key','provider_id','account','name','address','amount_current','total','amount_previous','nhapAt','xuatAt','memberName','customer'];
+  function showLoadingState(msg) {
+    if (!resultState) return;
+    resultState.innerHTML = `<div class="spinner-border text-primary" role="status" style="width:3rem;height:3rem"><span class="visually-hidden">Loading</span></div><p class="h5 mt-3">${escapeHtml(msg)}</p>`;
+    resultState.classList.remove('d-none');
+    listContainer && listContainer.classList.add('d-none');
+    gridContainer && gridContainer.classList.add('d-none');
+  }
+
+  function hideResultState() {
+    if (!resultState) return;
+    resultState.classList.add('d-none');
+    resultState.innerHTML = '';
+  }
+
+  function showEmptyState(msg) {
+    if (!resultState) return;
+    resultState.innerHTML = `<i class="state-icon bx bx-data"></i><p class="h5 mt-3 state-message">${escapeHtml(msg)}</p>`;
+    resultState.classList.remove('d-none');
+    listContainer && listContainer.classList.add('d-none');
+    gridContainer && gridContainer.classList.add('d-none');
+  }
+
+  function apiGet(path) {
+    return fetch('/api' + path, { cache: 'no-store' }).then(async res => {
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(text || `Status ${res.status}`);
+      }
+      return res.json();
+    });
+  }
+
+  function apiPost(path, body) {
+    return fetch('/api' + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(async res => {
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(text || `Status ${res.status}`);
+      }
+      return res.json();
+    });
+  }
+
+  // --- Normalization helpers ---
+  // Normalize various upstream/raw shapes into { key, provider_id, account, name, address, amount_previous, amount_current, total, nhapAt, xuatAt, memberName, employee_username, raw }
+  function normalizeUpstreamItem(sku, account, upstream) {
+    const raw = upstream || {};
     const out = {};
-    keys.forEach(k => { out[k] = item[k] !== undefined ? item[k] : (item.raw && item.raw[k] !== undefined ? item.raw[k] : '') });
-    // ensure numeric strings
-    out.amount_current = out.amount_current == null ? '0' : String(out.amount_current);
-    out.total = out.total == null ? out.amount_current || '0' : String(out.total);
-    out.amount_previous = out.amount_previous == null ? '0' : String(out.amount_previous);
-    out.key = out.key || `${out.provider_id || 'UNK'}::${out.account || ''}`;
+    out.account = account || raw.account || raw.contract_number || raw.cust || '';
+    out.provider_id = sku || raw.sku || raw.provider || raw.provider_id || '';
+    out.amount_previous = safeAmount(raw.amount_previous ?? raw.prev ?? raw.previous ?? 0);
+    out.amount_current = safeAmount(raw.amount_current ?? raw.curr ?? raw.current ?? raw.amount ?? 0);
+    out.total = safeAmount(raw.total ?? raw.amount_current ?? raw.amount ?? out.amount_current);
+    out.name = (raw.name || raw.customer || raw.cust_name || '').toString().trim();
+    out.address = (raw.address || raw.addr || raw.location || '').toString().trim();
+    out.key = `${out.provider_id}::${out.account}`;
+    out.nhapAt = raw.nhapAt || raw.created_at || null;
+    out.xuatAt = raw.xuatAt || raw.xuat_at || null;
+    out.memberName = raw.memberName || raw.member_name || raw.customer || '';
+    out.employee_username = raw.employee_username || raw.sold_by || '';
+    out.raw = raw;
     return out;
   }
 
-  // --- Rendering ---
+  // compatible normalizeRow used by server responses
+  function normalizeRow(item) {
+    if (!item) return null;
+    if (item.normalized) return item.normalized;
+    // if item already has expected keys
+    if (item.key && (item.total !== undefined || item.amount_current !== undefined)) return item;
+    // if nested data from upstream
+    if (item.data && item.data.data && Array.isArray(item.data.data.bills)) {
+      const bill = item.data.data.bills[0] || {};
+      const amount = safeAmount(bill.moneyAmount || 0);
+      return {
+        key: `${item.sku || item.provider_id || 'UNK'}::${item.account || item.contract_number || ''}`,
+        provider_id: item.sku || item.provider_id || '',
+        account: item.account || item.contract_number || '',
+        name: bill.customerName || item.name || `(Mã ${item.account || item.contract_number || ''})`,
+        address: bill.address || item.address || '',
+        amount_current: String(amount),
+        total: String(amount),
+        amount_previous: '0',
+        nhapAt: item.nhapAt || item.created_at || null,
+        xuatAt: item.xuatAt || item.xuat_at || null,
+        raw: item
+      };
+    }
+    // fallback generic mapping
+    return {
+      key: item.key || `${item.provider_id || 'UNK'}::${item.account || item.contract_number || ''}`,
+      provider_id: item.provider_id || item.sku || '',
+      account: item.account || item.contract_number || '',
+      name: item.name || `(Mã ${item.account || item.contract_number || ''})`,
+      address: item.address || '',
+      amount_current: String(item.amount_current || item.total || 0),
+      total: String(item.total || item.amount_current || 0),
+      amount_previous: String(item.amount_previous || 0),
+      nhapAt: item.nhapAt || item.created_at || null,
+      xuatAt: item.xuatAt || item.xuat_at || null,
+      memberName: item.memberName || item.member_name || '',
+      employee_username: item.employee_username || '',
+      raw: item
+    };
+  }
+
+  // --- Apply filters, sort, pagination, render ---
+  function applyFiltersAndSort() {
+    const q = (searchInput && searchInput.value || '').trim().toLowerCase();
+    const hideZero = hideZeroToggle && hideZeroToggle.checked;
+
+    filteredRows = allRows.filter(r => {
+      if (hideZero && safeAmount(r.total) === 0) return false;
+      if (!q) return true;
+      const hay = `${r.key} ${r.account} ${r.name} ${r.address} ${r.memberName || ''} ${r.employee_username || ''}`.toLowerCase();
+      return hay.includes(q);
+    }).map((r, idx) => Object.assign({ index: idx + 1 }, r));
+
+    // determine type for sort
+    let sortType = 'text';
+    if (thead) {
+      const activeTh = thead.querySelector(`th[data-col="${sortKey}"]`);
+      sortType = activeTh ? (activeTh.dataset.sort || 'text') : 'text';
+    }
+    filteredRows.sort((a, b) => {
+      let va = a[sortKey], vb = b[sortKey];
+      if (sortKey === 'index') {
+        va = allRows.indexOf(a); vb = allRows.indexOf(b);
+      }
+      if (sortType === 'money') return sortDir * (safeAmount(va) - safeAmount(vb));
+      if (sortType === 'date') return sortDir * ((new Date(va).getTime() || 0) - (new Date(vb).getTime() || 0));
+      return sortDir * (`${va || ''}`).localeCompare(`${vb || ''}`, 'vi', { sensitivity: 'base' });
+    });
+
+    renderCurrent();
+  }
+
+  function renderCurrent() {
+    const rowsPerPage = Number(rowsPerPageEl?.value || pagination.rowsPerPage || 15);
+    const totalRows = filteredRows.length;
+    const totalPages = Math.max(1, Math.ceil(totalRows / rowsPerPage));
+    pagination.rowsPerPage = rowsPerPage;
+    if (pagination.currentPage > totalPages) pagination.currentPage = totalPages;
+    if (pagination.currentPage < 1) pagination.currentPage = 1;
+    const start = (pagination.currentPage - 1) * rowsPerPage;
+    const pageRows = filteredRows.slice(start, start + rowsPerPage);
+
+    // update sum for page
+    const pageTotal = pageRows.reduce((s, r) => s + safeAmount(r.total || r.amount_current || 0), 0);
+    if (sumTotalEl) sumTotalEl.textContent = fmtMoney(pageTotal);
+
+    // update page info
+    if (pageInfoEl) pageInfoEl.textContent = `Trang ${pagination.currentPage} / ${totalPages}`;
+
+    if (displayMode === 'list') {
+      renderListPage(pageRows);
+    } else {
+      renderGridPage(pageRows);
+    }
+
+    // prev/next buttons
+    if (prevPageBtn) prevPageBtn.disabled = pagination.currentPage <= 1;
+    if (nextPageBtn) nextPageBtn.disabled = pagination.currentPage >= totalPages;
+  }
+
+  // --- Render list/grid functions (detailed) ---
   function updateSum(rows) {
     const sum = rows.reduce((s, r) => s + safeAmount(r.total), 0);
     if (sumTotalEl) sumTotalEl.textContent = fmtMoney(sum);
@@ -165,7 +307,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const idx = startIdx + i + 1;
       const tr = document.createElement('tr');
 
-      // checkbox
+      // select checkbox
       const tdSel = document.createElement('td');
       tdSel.dataset.col = 'select';
       const cb = document.createElement('input');
@@ -200,19 +342,26 @@ document.addEventListener('DOMContentLoaded', () => {
       tbody.append(tr);
     });
 
-    // toggle table visibility
     resultTable.classList.remove('d-none');
     listContainer.classList.remove('d-none');
     gridContainer.classList.add('d-none');
     applyColumnToggles();
     updateSum(rows);
+
+    // row checkbox toggles selected class
+    tbody.querySelectorAll('input.form-check-input[data-key]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const tr = cb.closest('tr');
+        if (cb.checked) tr.classList.add('selected'); else tr.classList.remove('selected');
+      });
+    });
   }
 
   function renderGridPage(rows) {
     gridContainer.innerHTML = '';
     rows.forEach(r => {
       const card = document.createElement('div');
-      card.className = 'card grid-card shadow-sm';
+      card.className = 'card grid-card shadow-sm animated-pop';
       const h = document.createElement('div');
       h.className = 'card-header';
       h.textContent = r.name || '(Không tên)';
@@ -222,24 +371,45 @@ document.addEventListener('DOMContentLoaded', () => {
       acc.className = 'card-text';
       acc.textContent = `Mã KH: ${r.account || ''}`;
       const addr = document.createElement('p');
-      addr.className = 'card-text';
+      addr.className = 'card-text truncate-2';
       addr.textContent = `Địa chỉ: ${r.address || ''}`;
-      const total = document.createElement('p');
+      const total = document.createElement('div');
       total.className = 'card-total';
       total.textContent = fmtMoney(r.total || r.amount_current || 0);
       const meta = document.createElement('div');
       meta.className = 'card-footer';
-      meta.innerHTML = `${r.nhapAt ? `<small>Nhập: ${fmtDate(r.nhapAt)}</small>` : ''}${r.xuatAt ? `<small class="d-block">Xuất: ${fmtDate(r.xuatAt)}</small>` : ''}${r.memberName ? `<small class="d-block">KHT: ${r.memberName}</small>` : ''}`;
+      meta.innerHTML = `${r.nhapAt ? `<small>Nhập: ${fmtDate(r.nhapAt)}</small>` : ''}${r.xuatAt ? `<small class="d-block">Xuất: ${fmtDate(r.xuatAt)}</small>` : ''}${r.memberName ? `<small class="d-block">KHT: ${escapeHtml(r.memberName)}</small>` : ''}`;
 
-      b.append(acc, addr, total);
+      // action buttons container
+      const actions = document.createElement('div');
+      actions.className = 'mt-2 row-actions';
+      actions.innerHTML = `<button class="btn btn-sm btn-outline-primary btn-copy-key" data-key="${escapeHtml(r.key)}" title="Sao chép key"><i class="bx bx-copy"></i></button>
+                           <button class="btn btn-sm btn-outline-success btn-import-one" data-key="${escapeHtml(r.key)}" title="Nhập vào KHO"><i class="bx bx-import"></i></button>`;
+      b.append(acc, addr, total, actions);
       card.append(h, b, meta);
       gridContainer.append(card);
     });
 
     listContainer.classList.add('d-none');
     gridContainer.classList.remove('d-none');
+
+    // bind actions
+    gridContainer.querySelectorAll('.btn-copy-key').forEach(b => b.addEventListener('click', async (e) => {
+      const key = e.currentTarget.dataset.key;
+      try { await navigator.clipboard.writeText(key); showStatus('Đã sao chép ' + key); } catch { showStatus('Không thể sao chép', 'warn'); }
+    }));
+    gridContainer.querySelectorAll('.btn-import-one').forEach(b => b.addEventListener('click', async (e) => {
+      const key = e.currentTarget.dataset.key;
+      const item = allRows.find(x => x.key === key);
+      if (!item) return showStatus('Không tìm thấy item', 'warn');
+      try {
+        const res = await apiPost('/kho/import', { bills: [item] });
+        showStatus(`Đã nhập 1 mục (${item.key})`);
+      } catch (err) { showStatus('Import lỗi: ' + err.message, 'warn'); }
+    }));
   }
 
+  // --- Column toggles ---
   function applyColumnToggles() {
     if (!resultTable) return;
     colToggles.forEach(cb => {
@@ -249,152 +419,71 @@ document.addEventListener('DOMContentLoaded', () => {
         if (checked) el.classList.remove('hidden'); else el.classList.add('hidden');
       });
     });
-    if (tfoot) {
-      // show/hide footer columns same as header visibility of 'select' -> keep at least total visible
-      tfoot.classList.remove('d-none');
-    }
+    if (tfoot) tfoot.classList.remove('d-none');
   }
+  colToggles.forEach(inp => inp.addEventListener('change', applyColumnToggles));
 
-  function renderCurrent() {
-    // filter & sort then paginate and render
-    const term = (searchInput && searchInput.value || '').toLowerCase().trim();
-    const hideZero = hideZeroToggle && hideZeroToggle.checked;
-
-    filteredRows = allRows.filter(r => {
-      if (hideZero && safeAmount(r.total) === 0) return false;
-      if (!term) return true;
-      const hay = `${r.name} ${r.address} ${r.account} ${r.memberName || ''} ${r.employee_username || ''}`.toLowerCase();
-      return hay.includes(term);
-    });
-
-    // sort
-    const type = thead ? (thead.querySelector(`th[data-col="${sortKey}"]`)?.dataset.sort || 'text') : 'text';
-    filteredRows.sort((a, b) => {
-      let va = a[sortKey], vb = b[sortKey];
-      if (sortKey === 'index') {
-        va = allRows.indexOf(a); vb = allRows.indexOf(b);
-      }
-      if (type === 'money') {
-        return sortDir * (safeAmount(va) - safeAmount(vb));
-      } else if (type === 'date') {
-        return sortDir * ((va || '').localeCompare(vb || ''));
-      } else {
-        return sortDir * (`${va || ''}`).localeCompare(`${vb || ''}`, 'vi', { sensitivity: 'base' });
-      }
-    });
-
-    // pagination
-    pagination.currentPage = Math.min(Math.max(1, pagination.currentPage), Math.ceil(filteredRows.length / pagination.rowsPerPage) || 1);
-    const start = (pagination.currentPage - 1) * pagination.rowsPerPage;
-    const end = start + pagination.rowsPerPage;
-    const pageRows = filteredRows.slice(start, end);
-
-    // render according to display mode
-    if (displayMode === 'list') renderListPage(pageRows);
-    else renderGridPage(pageRows);
-
-    // update page info and prev/next
-    const totalPages = Math.ceil(filteredRows.length / pagination.rowsPerPage) || 1;
-    pageInfoEl.textContent = `Trang ${pagination.currentPage} / ${totalPages}`;
-    prevPageBtn.disabled = pagination.currentPage <= 1;
-    nextPageBtn.disabled = pagination.currentPage >= totalPages;
-  }
-
-  // --- Event bindings ---
-
-  // Filter duplicates
-  filterDupBtn.addEventListener('click', () => {
-    const lines = accountsEl.value.split('\n').map(s => s.trim()).filter(Boolean);
-    const unique = Array.from(new Set(lines));
-    accountsEl.value = unique.join('\n');
-    showStatus(`Đã lọc trùng: còn ${unique.length} mã`, 'info');
-  });
-
-  // Sort header clicks
+  // --- Sorting via header ---
   if (thead) {
-    thead.addEventListener('click', e => {
-      const th = e.target.closest('th[data-sort]');
-      if (!th) return;
-      const col = th.dataset.col;
-      if (col === sortKey) sortDir *= -1; else { sortKey = col; sortDir = 1; }
-      // toggle classes
-      thead.querySelectorAll('th').forEach(t => t.classList.remove('sorted-asc','sorted-desc'));
-      const active = thead.querySelector(`th[data-col="${sortKey}"]`);
-      if (active) active.classList.add(sortDir === 1 ? 'sorted-asc' : 'sorted-desc');
-      renderCurrent();
+    thead.querySelectorAll('th[data-sort]').forEach(th => {
+      th.addEventListener('click', () => {
+        const col = th.dataset.col;
+        if (!col) return;
+        if (sortKey === col) sortDir *= -1; else { sortKey = col; sortDir = 1; }
+        thead.querySelectorAll('th').forEach(t => t.classList.remove('sorted-asc', 'sorted-desc'));
+        th.classList.add(sortDir === 1 ? 'sorted-asc' : 'sorted-desc');
+        applyFiltersAndSort();
+      });
     });
   }
 
-  // View toggles
-  viewListBtn.addEventListener('click', () => {
-    displayMode = 'list';
-    viewListBtn.classList.add('active');
-    viewGridBtn.classList.remove('active');
-    renderCurrent();
-  });
-  viewGridBtn.addEventListener('click', () => {
-    displayMode = 'grid';
-    viewGridBtn.classList.add('active');
-    viewListBtn.classList.remove('active');
-    renderCurrent();
-  });
-
-  // Pagination controls
-  rowsPerPageEl.addEventListener('change', () => {
-    pagination.rowsPerPage = Number(rowsPerPageEl.value);
-    pagination.currentPage = 1;
-    renderCurrent();
-  });
-  prevPageBtn.addEventListener('click', () => {
-    if (pagination.currentPage > 1) { pagination.currentPage--; renderCurrent(); }
-  });
-  nextPageBtn.addEventListener('click', () => {
-    const totalPages = Math.ceil(filteredRows.length / pagination.rowsPerPage) || 1;
+  // --- Pagination controls ---
+  rowsPerPageEl && rowsPerPageEl.addEventListener('change', () => { pagination.rowsPerPage = Number(rowsPerPageEl.value); pagination.currentPage = 1; renderCurrent(); });
+  prevPageBtn && prevPageBtn.addEventListener('click', () => { if (pagination.currentPage > 1) { pagination.currentPage--; renderCurrent(); } });
+  nextPageBtn && nextPageBtn.addEventListener('click', () => {
+    const totalPages = Math.max(1, Math.ceil(filteredRows.length / (pagination.rowsPerPage || 15)));
     if (pagination.currentPage < totalPages) { pagination.currentPage++; renderCurrent(); }
   });
 
-  // Search & hide zero
-  searchInput.addEventListener('input', () => { pagination.currentPage = 1; renderCurrent(); });
-  hideZeroToggle.addEventListener('change', () => { pagination.currentPage = 1; renderCurrent(); });
+  // --- View toggles ---
+  viewListBtn && viewListBtn.addEventListener('click', () => { displayMode = 'list'; viewListBtn.classList.add('active'); viewGridBtn.classList.remove('active'); renderCurrent(); });
+  viewGridBtn && viewGridBtn.addEventListener('click', () => { displayMode = 'grid'; viewGridBtn.classList.add('active'); viewListBtn.classList.remove('active'); renderCurrent(); });
 
-  // Select All
-  selectAllCb && selectAllCb.addEventListener('change', () => {
-    const checked = selectAllCb.checked;
-    tbody && tbody.querySelectorAll('input[type=checkbox][data-key]').forEach(cb => cb.checked = checked);
-  });
+  // --- Search & hide zero ---
+  searchInput && searchInput.addEventListener('input', () => { pagination.currentPage = 1; applyFiltersAndSort(); });
+  hideZeroToggle && hideZeroToggle.addEventListener('change', () => { pagination.currentPage = 1; applyFiltersAndSort(); });
 
-  // Copy
-  copyBtn.addEventListener('click', async () => {
-    const lines = [];
-    const visibleCols = Array.from(document.querySelectorAll('.col-options input[data-col]')).filter(cb => cb.checked).map(cb => cb.dataset.col);
-    for (const r of filteredRows) {
-      const parts = [];
-      for (const col of visibleCols) {
-        switch (col) {
-          case 'index': parts.push(String(allRows.indexOf(r) + 1)); break;
-          case 'name': parts.push(r.name || ''); break;
-          case 'address': parts.push(r.address || ''); break;
-          case 'account': parts.push(r.account || ''); break;
-          case 'prev': parts.push(fmtMoney(r.amount_previous || '0')); break;
-          case 'curr': parts.push(fmtMoney(r.amount_current || '0')); break;
-          case 'total': parts.push(fmtMoney(r.total || '0')); break;
-          case 'nhap': parts.push(fmtDate(r.nhapAt || '')); break;
-          case 'xuat': parts.push(fmtDate(r.xuatAt || '')); break;
-          case 'member': parts.push(r.memberName || ''); break;
-          case 'employee': parts.push(r.employee_username || ''); break;
-          default: parts.push(''); break;
-        }
-      }
-      lines.push(parts.join('\t'));
-    }
-    const text = lines.join('\n');
+  // --- Copy visible rows (Part 3) ---
+  copyBtn && copyBtn.addEventListener('click', async () => {
     try {
-      await navigator.clipboard.writeText(text);
+      const visibleCols = Array.from(document.querySelectorAll('.col-options input[data-col]')).filter(cb => cb.checked).map(cb => cb.dataset.col);
+      const lines = filteredRows.map(r => {
+        const parts = [];
+        for (const col of visibleCols) {
+          switch (col) {
+            case 'index': parts.push(String(allRows.indexOf(r) + 1)); break;
+            case 'name': parts.push(r.name || ''); break;
+            case 'address': parts.push(r.address || ''); break;
+            case 'account': parts.push(r.account || ''); break;
+            case 'prev': parts.push(fmtMoney(r.amount_previous || '0')); break;
+            case 'curr': parts.push(fmtMoney(r.amount_current || '0')); break;
+            case 'total': parts.push(fmtMoney(r.total || '0')); break;
+            case 'nhap': parts.push(fmtDate(r.nhapAt || '')); break;
+            case 'xuat': parts.push(fmtDate(r.xuatAt || '')); break;
+            case 'member': parts.push(r.memberName || ''); break;
+            case 'employee': parts.push(r.employee_username || ''); break;
+            default: parts.push(''); break;
+          }
+        }
+        return parts.join('\t');
+      }).join('\n');
+
+      await navigator.clipboard.writeText(lines);
       showStatus('Đã sao chép vào clipboard', 'info');
     } catch (err) {
       // fallback
       const ta = document.createElement('textarea');
-      ta.value = text;
+      ta.value = lines || '';
       document.body.appendChild(ta);
       ta.select();
       document.execCommand('copy');
@@ -403,20 +492,19 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Export (calls server-side /api/export-excel)
-  exportBtn.addEventListener('click', () => {
-    // build query from current filters
-    const from = targetFrom.value || '';
-    const to = targetTo.value || '';
-    const url = `/api/export-excel?fromAmount=${encodeURIComponent(from)}&toAmount=${encodeURIComponent(to)}&sortBy=${encodeURIComponent(sortKey)}&sortOrder=${encodeURIComponent(sortDir===1?'asc':'desc')}`;
+  // --- Export (server-side) ---
+  exportBtn && exportBtn.addEventListener('click', () => {
+    const from = encodeURIComponent(targetFrom?.value || '');
+    const to = encodeURIComponent(targetTo?.value || '');
+    const url = `/api/export-excel?fromAmount=${from}&toAmount=${to}&sortBy=${encodeURIComponent(sortKey)}&sortOrder=${encodeURIComponent(sortDir === 1 ? 'asc' : 'desc')}`;
     window.open(url, '_blank');
     showStatus('Bắt đầu tải Excel...', 'info');
   });
 
-  // --- Server interactions --- (bulk lookup)
-  lookupBtn.addEventListener('click', async () => {
-    const sku = providerEl.value;
-    const codes = accountsEl.value.split('\n').map(s => s.trim()).filter(Boolean);
+  // --- Bulk lookup (Part 1/3) ---
+  lookupBtn && lookupBtn.addEventListener('click', async () => {
+    const sku = providerEl?.value;
+    const codes = (accountsEl?.value || '').split('\n').map(s => s.trim()).filter(Boolean);
     if (!codes.length) { showStatus('Vui lòng nhập mã hợp đồng (một mã mỗi dòng).', 'warn'); return; }
     setButtonLoading(lookupBtn, true);
     showLoadingState(`Đang tra cứu ${codes.length} mã...`);
@@ -427,18 +515,15 @@ document.addEventListener('DOMContentLoaded', () => {
         body: JSON.stringify({ contract_numbers: codes, sku })
       });
       if (!resp.ok) {
-        const txt = await resp.text();
+        const txt = await resp.text().catch(() => '');
         throw new Error(txt || `Server lỗi ${resp.status}`);
       }
       const results = await resp.json();
-      // results: [{account, ok, normalized, data} | {account, ok:false, error}]
-      const rows = results.map(r => {
+      const rows = results.map((r, i) => {
+        // r may be { ok, normalized, data, error, account }
         if (r.ok && r.normalized) return normalizeRow(r);
-        // r might be already normalized (legacy)
-        if (r.account && r.data && r.normalized) return normalizeRow(r);
         if (r.ok && r.data && !r.normalized) {
-          // server returned raw from upstream - try to normalize using client fallback
-          const norm = r.normalized || {
+          const norm = {
             key: `${sku}::${r.account}`,
             provider_id: sku,
             account: r.account,
@@ -451,12 +536,12 @@ document.addEventListener('DOMContentLoaded', () => {
           };
           return norm;
         }
-        // error fallback
+        // fallback error row
         return {
-          key: `${sku}::${r.account}`,
+          key: `${sku}::${r.account || ('line' + i)}`,
           provider_id: sku,
-          account: r.account,
-          name: `(Mã ${r.account})`,
+          account: r.account || '',
+          name: `(Mã ${r.account || (i+1)})`,
           address: r.error || 'Lỗi tra cứu',
           amount_current: '0',
           amount_previous: '0',
@@ -468,7 +553,7 @@ document.addEventListener('DOMContentLoaded', () => {
       allRows = rows.map(normalizeRow);
       pagination.currentPage = 1;
       hideResultState();
-      renderCurrent();
+      applyFiltersAndSort();
       showStatus(`Hoàn tất tra cứu ${allRows.length} mã`, 'info');
     } catch (err) {
       console.error('Lookup error', err);
@@ -479,45 +564,27 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  function showEmptyState(msg) {
-    if (!resultState) return;
-    resultState.innerHTML = `<i class="state-icon bx bx-data"></i><p class="h5 mt-3 state-message">${msg}</p>`;
-    resultState.classList.remove('d-none');
-    listContainer.classList.add('d-none');
-    gridContainer.classList.add('d-none');
-  }
-
-  // KHO: import selected
-  khoImportBtn.addEventListener('click', async () => {
+  // --- KHO import selected (Part 3) ---
+  khoImportBtn && khoImportBtn.addEventListener('click', async () => {
     if (!tbody) return showStatus('Không có kết quả để nhập', 'warn');
     const checked = Array.from(tbody.querySelectorAll('input[type=checkbox][data-key]:checked')).map(cb => cb.dataset.key);
     if (!checked.length) return showStatus('Chọn trước bill để nhập vào KHO', 'warn');
-    const bills = checked.map(k => allRows.find(r => (r.key || r.id) === k)).filter(Boolean).map(r => ({
-      ...r,
-      nhapAt: new Date().toISOString()
-    }));
+    const bills = checked.map(k => allRows.find(r => (r.key || r.id) === k)).filter(Boolean).map(r => ({ ...r, nhapAt: new Date().toISOString() }));
     setButtonLoading(khoImportBtn, true);
     try {
       const resp = await fetch('/api/kho/import', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bills })
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bills })
       });
-      if (!resp.ok) {
-        const txt = await resp.text();
-        throw new Error(txt || `Server lỗi ${resp.status}`);
-      }
+      if (!resp.ok) { const txt = await resp.text().catch(()=>''); throw new Error(txt || `Status ${resp.status}`); }
       const data = await resp.json();
-      showStatus(`Đã nhập ${data.added || 0} bill vào KHO`, 'info');
+      showStatus(`Đã nhập ${data.added || data.count || bills.length} bill vào KHO`, 'info');
     } catch (err) {
       showStatus('Lỗi nhập KHO: ' + (err.message || err), 'warn');
-    } finally {
-      setButtonLoading(khoImportBtn, false);
-    }
+    } finally { setButtonLoading(khoImportBtn, false); }
   });
 
-  // KHO list
-  khoListBtn.addEventListener('click', async () => {
+  // --- KHO list (Part 3) ---
+  khoListBtn && khoListBtn.addEventListener('click', async () => {
     setButtonLoading(khoListBtn, true);
     showLoadingState('Đang tải KHO...');
     try {
@@ -527,7 +594,7 @@ document.addEventListener('DOMContentLoaded', () => {
       allRows = data.map(normalizeRow);
       pagination.currentPage = 1;
       hideResultState();
-      renderCurrent();
+      applyFiltersAndSort();
       showStatus(`KHO: ${allRows.length} bill`, 'info');
     } catch (err) {
       console.error('KHO list error', err);
@@ -537,8 +604,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // KHO remove
-  khoRemoveBtn.addEventListener('click', async () => {
+  // --- KHO remove selected (Part 4) ---
+  khoRemoveBtn && khoRemoveBtn.addEventListener('click', async () => {
     if (!tbody) return showStatus('Không có kết quả để xóa', 'warn');
     const checked = Array.from(tbody.querySelectorAll('input[type=checkbox][data-key]:checked')).map(cb => cb.dataset.key);
     if (!checked.length) return showStatus('Chọn bill để xóa khỏi KHO', 'warn');
@@ -546,15 +613,13 @@ document.addEventListener('DOMContentLoaded', () => {
     setButtonLoading(khoRemoveBtn, true);
     try {
       const resp = await fetch('/api/kho/remove', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keys: checked })
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys: checked })
       });
       if (!resp.ok) throw new Error(`Status ${resp.status}`);
       const data = await resp.json();
       showStatus(`Đã xóa ${data.removed || 0} bill khỏi KHO`, 'info');
       // refresh KHO view
-      khoListBtn.click();
+      khoListBtn && khoListBtn.click();
     } catch (err) {
       showStatus('Lỗi xóa KHO: ' + (err.message || err), 'warn');
     } finally {
@@ -562,31 +627,32 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Members CRUD (basic)
+  // --- Members CRUD (Part 4) ---
   async function refreshMembers() {
     try {
       const resp = await fetch('/api/members');
       if (!resp.ok) throw new Error(`Status ${resp.status}`);
       const data = await resp.json();
-      memberSelect.innerHTML = '';
-      data.forEach(m => {
-        const o = new Option(`${m.name} (Z:${m.zalo || 'N/A'})`, m.id);
-        memberSelect.add(o);
-      });
+      if (memberSelect) {
+        memberSelect.innerHTML = '';
+        data.forEach(m => {
+          const o = new Option(`${m.name} (Z:${m.zalo || 'N/A'})`, m.id);
+          memberSelect.add(o);
+        });
+      }
     } catch (err) {
       console.error('Members load error', err);
     }
   }
-  memberAddBtn.addEventListener('click', async () => {
+
+  memberAddBtn && memberAddBtn.addEventListener('click', async () => {
     const name = prompt('Tên Khách Hàng Thẻ:')?.trim();
     if (!name) return;
     const zalo = prompt('Zalo (tùy chọn):') || '';
     const bank = prompt('Ngân hàng (tùy chọn):') || '';
     try {
       const resp = await fetch('/api/members', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, zalo, bank })
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, zalo, bank })
       });
       if (!resp.ok) throw new Error(`Status ${resp.status}`);
       await refreshMembers();
@@ -595,18 +661,16 @@ document.addEventListener('DOMContentLoaded', () => {
       showStatus('Lỗi thêm KHT: ' + (err.message || err), 'warn');
     }
   });
-  memberEditBtn.addEventListener('click', async () => {
-    const id = memberSelect.value;
+
+  memberEditBtn && memberEditBtn.addEventListener('click', async () => {
+    const id = memberSelect?.value;
     if (!id) return showStatus('Chọn KHT để sửa', 'warn');
-    const name = prompt('Tên mới:')?.trim();
-    if (!name) return;
+    const name = prompt('Tên mới:')?.trim(); if (!name) return;
     const zalo = prompt('Zalo mới:') || '';
     const bank = prompt('Ngân hàng mới:') || '';
     try {
       const resp = await fetch(`/api/members/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, zalo, bank })
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, zalo, bank })
       });
       if (!resp.ok) throw new Error(`Status ${resp.status}`);
       await refreshMembers();
@@ -615,7 +679,8 @@ document.addEventListener('DOMContentLoaded', () => {
       showStatus('Lỗi cập nhật KHT: ' + (err.message || err), 'warn');
     }
   });
-  memberViewBtn.addEventListener('click', async () => {
+
+  memberViewBtn && memberViewBtn.addEventListener('click', async () => {
     try {
       const resp = await fetch('/api/members');
       if (!resp.ok) throw new Error(`Status ${resp.status}`);
@@ -625,66 +690,63 @@ document.addEventListener('DOMContentLoaded', () => {
       showStatus('Lỗi tải KHT: ' + (err.message || err), 'warn');
     }
   });
-  memberSearch.addEventListener('keydown', e => { if (e.key === 'Enter') refreshMembers(); });
 
-  // Pick by target (server-side helper)
-  pickBtn.addEventListener('click', async () => {
+  memberSearch && memberSearch.addEventListener('keydown', e => { if (e.key === 'Enter') refreshMembers(); });
+
+  // --- Pick by target (Part 4) ---
+  pickBtn && pickBtn.addEventListener('click', async () => {
     const from = Number(targetFrom.value || 0);
     const to = Number(targetTo.value || Infinity);
     if (!allRows || !allRows.length) return showStatus('Không có dữ liệu KHO để lọc', 'warn');
-    // If not in KHO view, request KHO first
-    // We'll rely on server-side select-by-target endpoint if exists, else local filter
+
+    // try server-side select-by-target then fallback to client filtering
     try {
       const resp = await fetch('/api/select-by-target', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target: from })
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target: from })
       });
       if (resp.ok) {
         const data = await resp.json();
-        // data.keys contains selection keys
         const keys = data.keys || [];
-        // filter local allRows to selected keys and render
         allRows = allRows.filter(r => keys.includes(r.key));
         pagination.currentPage = 1;
-        renderCurrent();
-        showStatus(`Đã chọn ${keys.length} bill (tổng: ${fmtMoney(data.sum)})`, 'info');
+        applyFiltersAndSort();
+        showStatus(`Đã chọn ${keys.length} bill (tổng: ${fmtMoney(data.sum || 0)})`, 'info');
         return;
       }
     } catch (err) {
-      // fallback to local filtering by amount range
+      // ignore and fallback
     }
 
-    // Local fallback: filter by amount between from and to
+    // client-side fallback
     const filtered = allRows.filter(r => {
       const num = safeAmount(r.total);
       return num >= (from || 0) && num <= (to || Infinity);
     });
     allRows = filtered;
     pagination.currentPage = 1;
-    renderCurrent();
+    applyFiltersAndSort();
     showStatus(`Đã lọc ${filtered.length} bill theo khoảng`, 'info');
   });
 
-  // Sell
-  sellBtn.addEventListener('click', async () => {
-    const memberId = memberSelect.value;
+  // --- Sell (Part 4) ---
+  sellBtn && sellBtn.addEventListener('click', async () => {
+    const memberId = memberSelect?.value;
     if (!memberId) return showStatus('Chọn Khách Hàng Thẻ trước khi bán', 'warn');
+    if (!tbody) return showStatus('Không tìm thấy bảng kết quả', 'warn');
     const selectedKeys = Array.from(tbody.querySelectorAll('input[type=checkbox][data-key]:checked')).map(cb => cb.dataset.key);
     if (!selectedKeys.length) return showStatus('Chọn bill để bán', 'warn');
     if (!confirm(`Bạn chắc chắn muốn bán ${selectedKeys.length} bill?`)) return;
     setButtonLoading(sellBtn, true);
     try {
       const resp = await fetch('/api/sell', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ memberId, keys: selectedKeys, soldAt: new Date().toISOString() })
       });
       if (!resp.ok) throw new Error(`Status ${resp.status}`);
       const data = await resp.json();
       showStatus(`Đã bán ${data.sold_count || 0} bill`, 'info');
       // refresh KHO
-      await khoListBtn.click();
+      khoListBtn && khoListBtn.click();
     } catch (err) {
       showStatus('Lỗi khi bán: ' + (err.message || err), 'warn');
     } finally {
@@ -692,8 +754,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // History
-  historyBtn.addEventListener('click', async () => {
+  // --- History (Part 4) ---
+  historyBtn && historyBtn.addEventListener('click', async () => {
     setButtonLoading(historyBtn, true);
     showLoadingState('Đang tải lịch sử giao dịch...');
     try {
@@ -703,7 +765,7 @@ document.addEventListener('DOMContentLoaded', () => {
       allRows = data.map(normalizeRow);
       pagination.currentPage = 1;
       hideResultState();
-      renderCurrent();
+      applyFiltersAndSort();
       showStatus(`Lịch sử ${allRows.length} mục`, 'info');
     } catch (err) {
       showEmptyState('Lỗi tải lịch sử: ' + (err.message || err));
@@ -712,62 +774,58 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // On initial load: refresh members
-  (async () => {
-    await refreshMembers();
+  // --- Initial load ---
+  (async function initialLoad() {
+    try {
+      await refreshMembers();
+      // optionally pre-load KHO providers for filter UI
+      await loadKhoProviders();
+    } catch (e) {
+      console.warn('initialLoad', e);
+    } finally {
+      // UI init
+      initUI();
+      applyColumnToggles();
+    }
   })();
 
-  // Initial UI state
-  function initUI() {
-    // apply column toggles default
-    applyColumnToggles();
-    // initial pagination
-    pagination.rowsPerPage = Number(rowsPerPageEl.value || 15);
-    // initial view
-    displayMode = 'list';
-    viewListBtn.classList.add('active');
-    viewGridBtn.classList.remove('active');
-  }
-  initUI();
-
-  // --- Utility: normalizeRow wrapper (handles server normalized or direct) ---
-  function normalizeRow(raw) {
-    // If server returned { normalized: { ... } } earlier we normalized in bulk handler; but ensure shape
-    if (!raw) return null;
-    if (raw.normalized) return raw.normalized;
-    // If raw is already normalized-like (has key/account/total)
-    if (raw.key && raw.account && raw.total !== undefined) return raw;
-    // else possible upstream raw shape: data.data.bills[0] etc.
-    if (raw.data && raw.data.data && Array.isArray(raw.data.data.bills)) {
-      const bill = raw.data.data.bills[0] || {};
-      const amount = safeAmount(bill.moneyAmount || 0);
-      return {
-        key: `${raw.sku || raw.provider_id || 'UNK'}::${raw.account || raw.contract_number || ''}`,
-        provider_id: raw.sku || raw.provider_id || '',
-        account: raw.account || raw.contract_number || '',
-        name: bill.customerName || raw.name || `(Mã ${raw.account || raw.contract_number || ''})`,
-        address: bill.address || raw.address || '',
-        amount_current: String(amount),
-        total: String(amount),
-        amount_previous: '0',
-        raw
-      };
+  async function loadKhoProviders() {
+    try {
+      const arr = await apiGet('/kho/list');
+      const providers = Array.from(new Set(arr.map(r => r.provider_id))).filter(Boolean).sort();
+      const sel = document.getElementById('khoProviderFilter');
+      if (sel) sel.innerHTML = '<option value="">— Tất cả nhà cung cấp —</option>' + providers.map(p => `<option value="${p}">${p}</option>`).join('');
+    } catch (err) {
+      // ignore
     }
-    // fallback generic
-    return {
-      key: raw.key || `${raw.provider_id||'UNK'}::${raw.account||raw.contract_number||''}`,
-      provider_id: raw.provider_id || raw.sku || '',
-      account: raw.account || raw.contract_number || '',
-      name: raw.name || `(Mã ${raw.account || raw.contract_number || ''})`,
-      address: raw.address || '',
-      amount_current: String(raw.amount_current || raw.total || 0),
-      total: String(raw.total || raw.amount_current || 0),
-      amount_previous: String(raw.amount_previous || 0),
-      raw
-    };
   }
 
-  // Expose renderCurrent to global for debugging
+  // --- Initial UI & helpers ---
+  function initUI() {
+    pagination.rowsPerPage = Number(rowsPerPageEl?.value || 15);
+    displayMode = 'list';
+    viewListBtn && viewListBtn.classList.add('active');
+    viewGridBtn && viewGridBtn.classList.remove('active');
+    applyColumnToggles();
+  }
+
+  // --- Small developer helpers/expose ---
+  window.__checkbill = {
+    getState: () => ({ allRows, filteredRows, pagination, sortKey, sortDir, displayMode }),
+    reloadMembers: refreshMembers,
+    refreshKho: () => khoListBtn && khoListBtn.click(),
+    refreshHistory: () => historyBtn && historyBtn.click(),
+    renderCurrent: () => applyFiltersAndSort()
+  };
+
+  // keyboard shortcuts
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); accountsEl && accountsEl.focus(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'g') { e.preventDefault(); viewGridBtn && viewGridBtn.click(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'l') { e.preventDefault(); viewListBtn && viewListBtn.click(); }
+  });
+
+  // expose renderCurrent for debugging
   window.renderCurrent = renderCurrent;
 
-}); // end DOMContentLoaded
+}); // DOMContentLoaded end

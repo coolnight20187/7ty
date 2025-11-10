@@ -15,7 +15,7 @@
     "strictBindCallApply": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "isolatedModules": false,
+    "isolatedModules": true,
     "incremental": true,
     "outDir": "dist",
     "rootDir": ".",
@@ -24,7 +24,17 @@
     "declaration": false,
     "declarationMap": false,
     "types": ["node", "express"],
-    "typeRoots": ["./node_modules/@types", "./types"]
+    "typeRoots": ["./node_modules/@types", "./types"],
+    "jsx": "react-jsx",
+    "skipDefaultLibCheck": false,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": false,
+    "useUnknownInCatchVariables": false,
+    "exactOptionalPropertyTypes": false,
+    "noEmitOnError": true,
+    "emitDecoratorMetadata": false,
+    "experimentalDecorators": false,
+    "pretty": true
   },
   "include": [
     "server.ts",
@@ -32,18 +42,33 @@
     "netlify/**/*",
     "src/**/*",
     "scripts/**/*",
-    "types/**/*"
+    "types/**/*",
+    "public/**/*.ts",
+    "migrations/**/*.ts"
   ],
   "exclude": [
     "node_modules",
     "dist",
     ".cache",
     "coverage",
-    "build"
+    "build",
+    "public/**/*.js"
   ],
   "ts-node": {
     "transpileOnly": true,
     "preferTsExts": true,
-    "swc": false
+    "swc": false,
+    "compilerOptions": {
+      "module": "ES2022",
+      "moduleResolution": "node",
+      "esModuleInterop": true
+    }
+  },
+  "projectGuidance": {
+    "note1": "This tsconfig targets modern Node (>=18) and ESM. Keep 'type': 'module' in package.json to match.",
+    "note2": "If you need CommonJS build for other tooling, create tsconfig.cjs.json with module: CommonJS and a separate build script.",
+    "note3": "declaration is false because this project is an application (not a library). Set declaration:true if publishing types.",
+    "note4": "isolatedModules:true improves compatibility with transpile-only tools (ts-node-dev, SWC, esbuild).",
+    "note5": "sourceMap:true helps debugging in production when using mapped sources; remove if you cannot store maps."
   }
 }
