@@ -72,7 +72,7 @@ let pool: Pool | null = null;
 if (process.env.DATABASE_URL) {
   try {
     pool = new Pool({ connectionString: process.env.DATABASE_URL });
-    pool.on('error', (err) => logError('Postgres pool error', err));
+    pool.on('error', (err: any) => logError('Postgres pool error', err));
     logInfo('Postgres pool initialized');
   } catch (err) {
     logError('Failed to initialize Postgres pool', err);
