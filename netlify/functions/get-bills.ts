@@ -21,9 +21,9 @@ const pLimit = require("p-limit");
 /* Config (override via Netlify env) */
 const NEW_API_BASE_URL = process.env.NEW_API_BASE_URL || "https://bill.7ty.vn/api";
 const NEW_API_PATH = process.env.NEW_API_PATH || "/check-electricity";
-const NEW_API_TIMEOUT_MS = Number(process.env.NEW_API_TIMEOUT_MS || 30000);
+const NEW_API_TIMEOUT_MS = Number(process.env.NEW_API_TIMEOUT_MS || 60000);
 const NEW_API_MAX_RETRIES = Number(process.env.NEW_API_MAX_RETRIES || 3);
-const NEW_API_CONCURRENCY = Number(process.env.NEW_API_CONCURRENCY || 6);
+const NEW_API_CONCURRENCY = Number(process.env.NEW_API_CONCURRENCY || 1);
 const LOG_LEVEL = (process.env.LOG_LEVEL || "info").toLowerCase();
 
 /* Simple logging helpers */
@@ -300,6 +300,27 @@ const handler: Handler = async (event) => {
             NEW_API_TIMEOUT_MS,
             NEW_API_MAX_RETRIES
           );
+
+          // Treat explicit upstream 400 as no-debt and return normalized no-debt result
+          if (upstream && upstream.data && Number(upstream.data.status_code) === 400) {
+            return {
+              account: acc,
+              ok: true,
+              normalized: {
+                key: `${sku}::${acc}`,
+                provider_id: sku,
+                account: acc,
+                name: `(Mã ${acc})`,
+                address: upstream.data.parsed_response_text || upstream.data.response_text || "Không nợ cước / không có dữ liệu",
+                month: "",
+                amount_current: "0",
+                total: "0",
+                amount_previous: "0",
+                raw: upstream
+              },
+              raw: upstream
+            };
+          }
 
           const normalized = normalizeCheckBillResponse(upstream, acc, sku);
           return { account: acc, ok: true, normalized, raw: upstream };
