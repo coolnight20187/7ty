@@ -8,6 +8,7 @@
     "dev": "ts-node-dev --respawn --transpile-only --no-notify --ignore-watch node_modules server.ts",
     "start": "node dist/server.js",
     "build": "tsc -p tsconfig.json",
+    "build:pages": "npm run build && cp -R public dist/public || true",
     "migrate": "node scripts/migrate.js",
     "seed:admin": "node scripts/seed_admin.js",
     "check-env": "node scripts/check-env.js",

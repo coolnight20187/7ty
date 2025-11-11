@@ -456,7 +456,7 @@
   <!-- Load bootstrap bundle BEFORE any script that uses `bootstrap` -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
 
-  <!-- Inline client script (modal initialization moved inside DOMContentLoaded) -->
+  <!-- Inline client script -->
   <script>
     const API_BASE = '/api';
 
@@ -480,7 +480,6 @@
     let loginModal = null, khoModal = null, historyModal = null, employeeModal = null, notesModal = null;
 
     document.addEventListener('DOMContentLoaded', async () => {
-      // initialize modal instances only if bootstrap and element exist
       if (typeof bootstrap !== 'undefined') {
         if ($('loginModal')) loginModal = new bootstrap.Modal($('loginModal'), { backdrop: 'static' });
         if ($('khoModal')) khoModal = new bootstrap.Modal($('khoModal'));
@@ -497,8 +496,10 @@
           const m = await fetch(API_BASE + '/members');
           if(m.status === 401){
             if(loginModal) loginModal.show(); else showToast('Yêu cầu đăng nhập');
+            return;
           } else {
             initApp();
+            return;
           }
         } else initApp();
       }catch(e){ initApp(); }
@@ -510,22 +511,21 @@
     }
 
     function bindControls(){
-      $('filterDupBtn').addEventListener('click', ()=>{ const lines=$('accounts').value.split(/\\r?\\n/).map(s=>s.trim()).filter(Boolean); $('accounts').value=Array.from(new Set(lines)).join('\\n'); showToast('Đã loại bỏ trùng'); });
+      $('filterDupBtn').addEventListener('click', ()=>{ const lines=$('accounts').value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean); $('accounts').value=Array.from(new Set(lines)).join('\n'); showToast('Đã loại bỏ trùng'); });
       $('lookupBulkBtn').addEventListener('click', lookupBulk);
       $('importAllBtn').addEventListener('click', importAllResults);
       $('removeSelectedBtn').addEventListener('click', removeSelectedResults);
       $('khoListBtn').addEventListener('click', async ()=>{ await refreshKho(); if(khoModal) khoModal.show(); });
-      // safe optional handlers (check existence before adding)
       if($('khoRefreshBtn')) $('khoRefreshBtn').addEventListener('click', async ()=>{ await refreshKho(); showToast('Đã tải KHO'); });
       $('khoImportBtn')?.addEventListener('click', importAllResults);
       $('khoRemoveBtn')?.addEventListener('click', async ()=>{ const keys=prompt('Nhập key, ngăn cách bởi dấu phẩy'); if(!keys) return; const arr=keys.split(',').map(s=>s.trim()).filter(Boolean); await fetch(API_BASE + '/kho/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keys:arr})}); showToast('Gửi yêu cầu xóa'); });
       $('historyBtn')?.addEventListener('click', async ()=>{ await refreshHistory(); if(historyModal) historyModal.show(); });
-      $('historyRefreshBtn')?.addEventListener('click', async ()=>{ await refreshHistory(); showToast('Đã tải lịch sử'); });
-      $('historyExportCsvBtn')?.addEventListener('click', ()=>{ window.location.href = API_BASE + '/history?export=csv'; });
+      if($('historyRefreshBtn')) $('historyRefreshBtn').addEventListener('click', async ()=>{ await refreshHistory(); showToast('Đã tải lịch sử'); });
+      if($('historyExportCsvBtn')) $('historyExportCsvBtn').addEventListener('click', ()=>{ window.location.href = API_BASE + '/history?export=csv'; });
 
-      $('copyBtn').addEventListener('click', async ()=>{ try{ const trs=Array.from(document.querySelectorAll('#mainResultsTbody tr')); if(!trs.length){ showToast('Không có dữ liệu'); return;} const txt=trs.map(tr=>Array.from(tr.querySelectorAll('td')).map(td=>td.textContent.trim()).join('\\t')).join('\\n'); await navigator.clipboard.writeText(txt); showToast('Đã sao chép'); }catch(e){ showToast('Không thể sao chép'); } });
+      $('copyBtn').addEventListener('click', async ()=>{ try{ const trs=Array.from(document.querySelectorAll('#mainResultsTbody tr')); if(!trs.length){ showToast('Không có dữ liệu'); return;} const txt=trs.map(tr=>Array.from(tr.querySelectorAll('td')).map(td=>td.textContent.trim()).join('\t')).join('\n'); await navigator.clipboard.writeText(txt); showToast('Đã sao chép'); }catch(e){ showToast('Không thể sao chép'); } });
 
-      $('exportCsvBtn').addEventListener('click', ()=>{ const cols=['stt','key','account','provider','name','address','amount_current','total','nhapAt']; const rows=results.map((r,i)=>[i+1,r.key,r.account,r.provider_id,r.name,r.address,r.amount_current,r.total,r.nhapAt||'']); const csv=[cols.join(',')].concat(rows.map(r=>r.map(c=> (c==null?'':('"'+String(c).replace(/"/g,'""')+'"'))).join(','))).join('\\r\\n'); const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='results.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); });
+      $('exportCsvBtn').addEventListener('click', ()=>{ const cols=['stt','key','account','provider','name','address','amount_current','total','nhapAt']; const rows=results.map((r,i)=>[i+1,r.key,r.account,r.provider_id,r.name,r.address,r.amount_current,r.total,r.nhapAt||'']); const csv=[cols.join(',')].concat(rows.map(r=>r.map(c=> (c==null?'':('"'+String(c).replace(/"/g,'""')+'"'))).join(','))).join('\r\n'); const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='results.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); });
 
       $('selectAllMain')?.addEventListener('change', (e)=>{ const checked=e.target.checked; document.querySelectorAll('#mainResultsTbody input[type="checkbox"]').forEach(cb=>cb.checked=checked); });
 
@@ -537,22 +537,23 @@
 
       $('memberSearch')?.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ const q=$('memberSearch').value.trim().toLowerCase(); const sel=$('memberSelect'); sel.innerHTML='<option value="">— Chọn thành viên —</option>'+members.filter(m=> (m.name||'').toLowerCase().includes(q)).map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join(''); } });
 
-      $('openHelpBtn')?.addEventListener('click', ()=>{ alert('Trợ giúp:\\n- Tra cứu -> Nhập kết quả vào KHO -> Mở KHO để quản lý -> Bán để chuyển sang Lịch sử.\\n- Cấu hình API tại server, kiểm tra SKIP_AUTH cho dev.'); });
+      $('openHelpBtn')?.addEventListener('click', ()=>{ alert('Trợ giúp:\n- Tra cứu -> Nhập kết quả vào KHO -> Mở KHO để quản lý -> Bán để chuyển sang Lịch sử.\n- Cấu hình API tại server, kiểm tra SKIP_AUTH cho dev.'); });
     }
 
     async function lookupBulk(){
       const btn=$('lookupBulkBtn'); toggleSpinner(btn,true);
       try{
-        const sku=$('provider').value; const accounts=$('accounts').value.split(/\\r?\\n/).map(s=>s.trim()).filter(Boolean);
-        if(!accounts.length){ showToast('Nhập ít nhất 1 mã'); return; }
+        const sku=$('provider').value; const accounts=$('accounts').value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+        if(!accounts.length){ showToast('Nhập ít nhất 1 mã'); toggleSpinner(btn,false); return; }
         const resp=await fetch(API_BASE + '/check-electricity/bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sku,contract_numbers:accounts})});
-        if(!resp.ok){ const e=await resp.json().catch(()=>({error:'Upstream'})); showToast('Lỗi: '+(e.error||resp.status)); return; }
+        if(!resp.ok){ const e=await resp.json().catch(()=>({error:'Upstream'})); showToast('Lỗi: '+(e.error||resp.status)); toggleSpinner(btn,false); return; }
         const data=await resp.json();
         results = data.map((r,i)=>{ const n=r.normalized||{}; return { key: n.key||`${sku}::${accounts[i]}`, ok:r.ok, account:accounts[i], provider_id:sku, name:n.name||'', address:n.address||'', amount_current: Number(n.amount_current||0), total: Number(n.total||n.amount_current||0), nhapAt: n.created_at||null, raw: r.raw||null }; });
         renderMainResults(); showToast('Tra cứu hoàn tất: '+results.length+' mục');
       }catch(e){ console.error(e); showToast('Lỗi tra cứu'); } finally{ toggleSpinner(btn,false); }
     }
 
+    // Use the Part 6 implementations for import/remove/render helpers (final versions)
     async function importAllResults(){
       if(!results.length){ showToast('Không có kết quả'); return; }
       const items=results.map(r=>({ key:r.key, account:r.account, provider_id:r.provider_id, name:r.name, address:r.address, amount_current:r.amount_current, total:r.total, raw:r.raw }));
@@ -562,27 +563,44 @@
     function removeSelectedResults(){ const keys=Array.from(document.querySelectorAll('#mainResultsTbody input[type="checkbox"]:checked')).map(cb=>cb.dataset.key); if(!keys.length){ showToast('Chọn ít nhất 1 mục'); return;} results=results.filter(r=>!keys.includes(r.key)); renderMainResults(); showToast('Đã xóa khỏi danh sách'); }
 
     function renderMainResults(){
-      const tbody=$('mainResultsTbody'); tbody.innerHTML=''; const q=$('searchInput').value.trim().toLowerCase(); const hideZero=$('hideZeroToggle').checked;
+      const tbody=$('mainResultsTbody'); if(!tbody) return; tbody.innerHTML=''; const q=$('searchInput')?$('searchInput').value.trim().toLowerCase():''; const hideZero=$('hideZeroToggle')?$('hideZeroToggle').checked:false;
       const visible=results.filter((r)=>{ if(hideZero && (Number(r.total||r.amount_current||0)===0)) return false; if(!q) return true; return ((r.name||'')+' '+(r.address||'')+' '+(r.account||'')+' '+(r.key||'')).toLowerCase().includes(q); });
       visible.forEach((r,idx)=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td><input type="checkbox" data-key="${escapeHtml(r.key)}"></td><td>${idx+1}</td><td>${escapeHtml(r.key)}</td><td>${escapeHtml(r.account)}</td><td>${escapeHtml(r.provider_id)}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.address)}</td><td class="text-end">${fmtCurrency(r.amount_current||r.total)}</td><td class="text-end">${fmtCurrency(r.total||r.amount_current)}</td><td>${r.nhapAt?new Date(r.nhapAt).toLocaleString():''}</td><td><button class="btn btn-sm btn-danger row-remove" data-key="${escapeHtml(r.key)}"><i class="bx bx-trash"></i></button></td>`; tbody.appendChild(tr); });
       document.querySelectorAll('.row-remove').forEach(b=>b.addEventListener('click', e=>{ const k=e.currentTarget.dataset.key; results=results.filter(x=>x.key!==k); renderMainResults(); showToast('Đã xóa'); }));
-      $('resultsCount').textContent=visible.length+' mục (tổng '+results.length+')';
+      const countEl = $('resultsCount'); if(countEl) countEl.textContent = visible.length+' mục (tổng '+results.length+')';
+      updateSum();
     }
 
     function escapeHtml(s){ if(s==null) return ''; return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
-    async function loadMembers(){ try{ const resp=await fetch(API_BASE + '/members'); if(!resp.ok) return; members=await resp.json(); const sel=$('memberSelect'); sel.innerHTML='<option value="">— Chọn thành viên —</option>'+members.map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join(''); }catch(e){console.error('loadMembers',e);} }
+    async function loadMembers(){ try{ const resp=await fetch(API_BASE + '/members'); if(!resp.ok) return; members=await resp.json(); const sel=$('memberSelect'); if(sel) sel.innerHTML='<option value="">— Chọn thành viên —</option>'+members.map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join(''); }catch(e){console.error('loadMembers',e);} }
 
     async function loadEmployees(){ try{ const resp=await fetch(API_BASE + '/members'); if(resp.ok){ employees=[]; document.querySelectorAll('.admin-only').forEach(el=>el.classList.remove('d-none')); } }catch(e){console.error(e);} }
 
     async function loadKhoProviders(){ try{ const resp=await fetch(API_BASE + '/kho/list'); if(!resp.ok) return; const arr=await resp.json(); const providers=Array.from(new Set(arr.map(r=>r.provider_id))).filter(Boolean).sort(); const sel=$('khoProviderFilter'); if(sel) sel.innerHTML='<option value="">— Tất cả nhà cung cấp —</option>'+providers.map(p=>`<option value="${p}">${p}</option>`).join(''); }catch(e){console.error('loadKhoProviders',e);} }
 
-    async function refreshKho(){ try{ const q=$('khoSearch')?$('khoSearch').value.trim():''; const provider=$('khoProviderFilter')?$('khoProviderFilter').value:''; const url=new URL(API_BASE + '/kho/list', location.origin); if(q) url.searchParams.append('search',q); if(provider) url.searchParams.append('provider_id',provider); const resp=await fetch(url.toString()); if(!resp.ok){ showToast('Không thể tải KHO'); return; } const arr=await resp.json(); const tbody=$('khoTbody'); if(!tbody) return; tbody.innerHTML=''; arr.forEach(r=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td><input type="checkbox" data-key="${escapeHtml(r.key)}"></td><td>${escapeHtml(r.key)}</td><td>${escapeHtml(r.account)}</td><td>${escapeHtml(r.provider_id)}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.address)}</td><td class="text-end">${fmtCurrency(r.total)}</td><td>${r.nhapAt?new Date(r.nhapAt).toLocaleString():''}</td><td><button class="btn btn-outline-danger btn-sm kho-delete" data-key="${escapeHtml(r.key)}"><i class="bx bx-trash"></i></button></td>`; tbody.appendChild(tr); }); document.querySelectorAll('.kho-delete').forEach(btn=>btn.addEventListener('click', async e=>{ const key=e.currentTarget.dataset.key; if(!confirm('Xóa key '+key+' ?')) return; try{ const resp=await fetch(API_BASE + '/kho/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keys:[key]})}); const j=await resp.json(); showToast('Đã xóa: '+(j.removed||1)); await refreshKho(); }catch(err){console.error(err); showToast('Lỗi xóa'); } })); }catch(e){console.error('refreshKho',e); showToast('Lỗi tải KHO'); } }
+    async function refreshKho(){ try{ const q=$('khoSearch')?$('khoSearch').value.trim():''; const provider=$('khoProviderFilter')?$('khoProviderFilter').value:''; const url=new URL(API_BASE + '/kho/list', location.origin); if(q) url.searchParams.append('search',q); if(provider) url.searchParams.append('provider_id',provider); const resp=await fetch(url.toString()); if(!resp.ok){ showToast('Không thể tải KHO'); return []; } const arr=await resp.json(); const tbody=$('khoTbody'); if(!tbody) return arr; tbody.innerHTML=''; arr.forEach(r=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td><input type="checkbox" data-key="${escapeHtml(r.key)}"></td><td>${escapeHtml(r.key)}</td><td>${escapeHtml(r.account)}</td><td>${escapeHtml(r.provider_id)}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.address)}</td><td class="text-end">${fmtCurrency(r.total)}</td><td>${r.nhapAt?new Date(r.nhapAt).toLocaleString():''}</td><td><button class="btn btn-outline-danger btn-sm kho-delete" data-key="${escapeHtml(r.key)}"><i class="bx bx-trash"></i></button></td>`; tbody.appendChild(tr); }); document.querySelectorAll('.kho-delete').forEach(btn=>btn.addEventListener('click', async e=>{ const key=e.currentTarget.dataset.key; if(!confirm('Xóa key '+key+' ?')) return; try{ const resp=await fetch(API_BASE + '/kho/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keys:[key]})}); const j=await resp.json(); showToast('Đã xóa: '+(j.removed||1)); await refreshKho(); }catch(err){console.error(err); showToast('Lỗi xóa'); } })); return arr; }catch(e){console.error('refreshKho',e); showToast('Lỗi tải KHO'); return []; } }
 
-    async function refreshHistory(){ try{ const resp=await fetch(API_BASE + '/history?limit=200'); if(!resp.ok){ showToast('Không thể tải lịch sử'); return; } const arr=await resp.json(); const tbody=$('historyTbody'); if(!tbody) return; tbody.innerHTML=''; arr.forEach(h=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${h.id}</td><td>${escapeHtml(h.key)}</td><td>${escapeHtml(h.account)}</td><td>${escapeHtml(h.provider_id)}</td><td>${escapeHtml(h.name)}</td><td>${escapeHtml(h.member_name||'')}</td><td class="text-end">${fmtCurrency(h.total)}</td><td>${h.soldAt?new Date(h.soldAt).toLocaleString():''}</td>`; tbody.appendChild(tr); }); }catch(e){console.error('refreshHistory',e); showToast('Lỗi tải lịch sử'); } }
+    async function refreshHistory(){ try{ const resp=await fetch(API_BASE + '/history?limit=200'); if(!resp.ok){ showToast('Không thể tải lịch sử'); return []; } const arr=await resp.json(); const tbody=$('historyTbody'); if(!tbody) return arr; tbody.innerHTML=''; arr.forEach(h=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${h.id}</td><td>${escapeHtml(h.key)}</td><td>${escapeHtml(h.account)}</td><td>${escapeHtml(h.provider_id)}</td><td>${escapeHtml(h.name)}</td><td>${escapeHtml(h.member_name||'')}</td><td class="text-end">${fmtCurrency(h.total)}</td><td>${h.soldAt?new Date(h.soldAt).toLocaleString():''}</td>`; tbody.appendChild(tr); }); return arr; }catch(e){console.error('refreshHistory',e); showToast('Lỗi tải lịch sử'); return []; } }
+
+    // small utility to format money for table footer
+    function updateSum(){
+      const sum = results.reduce((s,r)=>s + (Number(r.total)||0), 0);
+      const el = $('sumTotal');
+      if(el) el.textContent = fmtCurrency(sum);
+    }
+
+    // Graceful fallback for pages without backend endpoints:
+    (async ()=>{
+      try {
+        const h = await fetch(API_BASE + '/health');
+        if(!h.ok) console.warn('API health not ok');
+      } catch(e){
+        console.warn('API not available, running in offline mode');
+      }
+    })();
 
   </script>
 
-  <!-- If you want to extract JS into app.js, move the script there and include with defer -->
 </body>
 </html>
