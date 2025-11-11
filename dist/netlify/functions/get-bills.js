@@ -1,34 +1,63 @@
 /**
  * netlify/functions/get-bills.ts
  *
- * Bulk check bills with concurrency, timeout/retry, input validation and logging.
+ * Robust Netlify Function to bulk-check bills (POST).
+ * - Handles CORS preflight (OPTIONS)
+ * - Validates input (contract_numbers array + sku)
+ * - Calls upstream with concurrency, timeout, retry/backoff
+ * - Normalizes upstream responses into consistent shape
+ * - Returns array of results: { account, ok: true, normalized, raw } | { account, ok: false, error, upstreamStatus }
  *
- * Expected env:
- * - NEW_API_BASE_URL, NEW_API_PATH, NEW_API_TIMEOUT_MS, NEW_API_MAX_RETRIES, NEW_API_CONCURRENCY
- * - SKIP_AUTH (optional)
- * - LOG_LEVEL (optional: debug|info|warn|error)
- *
- * Notes:
- * - Uses CommonJS-safe import for p-limit to be compatible with Netlify runtime and older bundlers.
- * - Parses upstream data.response_text if present to extract clearer error messages.
- * - Returns array of results for each account; each item contains ok boolean and either normalized or error/upstream details.
+ * Deploy:
+ * - Place at netlify/functions/get-bills.ts
+ * - Ensure netlify.toml or _redirects maps /api/* -> /.netlify/functions/:splat
+ * - Ensure Netlify build step compiles TypeScript (tsc) or use JS version
+ * - Set env vars as needed (NEW_API_BASE_URL, NEW_API_PATH, NEW_API_TIMEOUT_MS, NEW_API_MAX_RETRIES, NEW_API_CONCURRENCY)
  */
-const pLimit = require('p-limit');
-const NEW_API_BASE_URL = process.env.NEW_API_BASE_URL || 'https://bill.7ty.vn/api';
-const NEW_API_PATH = process.env.NEW_API_PATH || '/check-electricity';
+const pLimit = require("p-limit");
+/* Config (override via Netlify env) */
+const NEW_API_BASE_URL = process.env.NEW_API_BASE_URL || "https://bill.7ty.vn/api";
+const NEW_API_PATH = process.env.NEW_API_PATH || "/check-electricity";
 const NEW_API_TIMEOUT_MS = Number(process.env.NEW_API_TIMEOUT_MS || 30000);
 const NEW_API_MAX_RETRIES = Number(process.env.NEW_API_MAX_RETRIES || 3);
 const NEW_API_CONCURRENCY = Number(process.env.NEW_API_CONCURRENCY || 6);
-const LOG_LEVEL = (process.env.LOG_LEVEL || 'info').toLowerCase();
-function logDebug(...args) { if (LOG_LEVEL === 'debug')
-    console.debug('[get-bills]', ...args); }
-function logInfo(...args) { if (['debug', 'info'].includes(LOG_LEVEL))
-    console.info('[get-bills]', ...args); }
-function logWarn(...args) { if (['debug', 'info', 'warn'].includes(LOG_LEVEL))
-    console.warn('[get-bills]', ...args); }
-function logError(...args) { console.error('[get-bills]', ...args); }
-function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+const LOG_LEVEL = (process.env.LOG_LEVEL || "info").toLowerCase();
+/* Simple logging helpers */
+function logDebug(...args) { if (LOG_LEVEL === "debug")
+    console.debug("[get-bills]", ...args); }
+function logInfo(...args) { if (["debug", "info"].includes(LOG_LEVEL))
+    console.info("[get-bills]", ...args); }
+function logWarn(...args) { if (["debug", "info", "warn"].includes(LOG_LEVEL))
+    console.warn("[get-bills]", ...args); }
+function logError(...args) { console.error("[get-bills]", ...args); }
+function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
 function safeNumber(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
+/* Ensure every response includes string headers to satisfy HandlerResponse typing */
+const COMMON_HEADERS = {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization"
+};
+/* Safe header getter (works with various fetch Response header implementations) */
+function getHeaderSafe(headersLike, name) {
+    try {
+        if (!headersLike)
+            return "";
+        if (typeof headersLike.get === "function")
+            return headersLike.get(name) || "";
+        const lower = name.toLowerCase();
+        for (const k of Object.keys(headersLike)) {
+            if (k.toLowerCase() === lower)
+                return headersLike[k];
+        }
+        return "";
+    }
+    catch {
+        return "";
+    }
+}
+/* fetch + timeout + retry/backoff (throws UpstreamError on failure) */
 async function fetchWithTimeoutAndRetry(url, opts = {}, timeout = NEW_API_TIMEOUT_MS, retries = NEW_API_MAX_RETRIES) {
     async function attempt(remaining) {
         const controller = new AbortController();
@@ -36,51 +65,38 @@ async function fetchWithTimeoutAndRetry(url, opts = {}, timeout = NEW_API_TIMEOU
         try {
             const res = await fetch(url, { ...opts, signal: controller.signal });
             const text = await res.text();
-            // Status handling
             if (!res.ok) {
-                const snippet = text ? text.slice(0, 1000) : `Status ${res.status}`;
-                // Treat 4xx (except 429) as fatal (no retry) because likely client/payload issue
-                const err = Object.assign(new Error(`Upstream ${res.status}: ${snippet}`), { status: res.status, preview: snippet, fatal: (res.status >= 400 && res.status < 500 && res.status !== 429) });
+                const snippet = text ? String(text).slice(0, 1000) : `Status ${res.status}`;
+                const err = Object.assign(new Error(`Upstream ${res.status}: ${snippet}`), {
+                    status: res.status,
+                    preview: snippet,
+                    fatal: (res.status >= 400 && res.status < 500 && res.status !== 429)
+                });
+                // log limited preview for debug
+                logWarn('Upstream non-ok response', { status: res.status, preview: snippet.slice(0, 400) });
                 throw err;
             }
-            const ct = (res.headers.get('content-type') || '').toLowerCase();
-            // If content-type declares JSON, parse; otherwise try parse and provide clear preview if non-JSON
-            if (ct.includes('application/json')) {
-                try {
-                    return JSON.parse(text);
-                }
-                catch (e) {
-                    const preview = text ? text.slice(0, 1000) : '<empty>';
-                    const err = Object.assign(new Error('Upstream returned invalid JSON'), { status: res.status, preview, fatal: true });
-                    logError('Upstream invalid JSON', { url, preview });
-                    throw err;
-                }
+            // Try parse JSON (most upstreams return JSON)
+            try {
+                return JSON.parse(text || "{}");
             }
-            else {
-                // Some upstreams omit content-type even for JSON; try parse; if not JSON, return a descriptive error with preview
-                try {
-                    return JSON.parse(text);
-                }
-                catch (e) {
-                    const preview = text ? text.slice(0, 1000) : '<empty>';
-                    const err = Object.assign(new Error('Upstream returned non-JSON response'), { status: res.status, preview, fatal: true });
-                    logWarn('Upstream returned non-JSON response', { url, preview });
-                    throw err;
-                }
+            catch (parseErr) {
+                const preview = text ? String(text).slice(0, 1000) : "<empty>";
+                const err = Object.assign(new Error("Upstream returned non-JSON/invalid JSON"), { status: res.status, preview, fatal: true });
+                logWarn("Upstream invalid JSON", { preview });
+                throw err;
             }
         }
         catch (errAny) {
             const err = errAny;
-            // If fatal (e.g., 4xx non-429 or invalid JSON), do not retry
-            if (err?.fatal) {
+            if (err?.fatal)
                 throw err;
-            }
             clearTimeout(id);
             if (remaining <= 0)
                 throw err;
             const base = 700;
             const backoff = Math.min(base * Math.pow(2, NEW_API_MAX_RETRIES - remaining), 10000);
-            logDebug(`Fetch error, retry in ${backoff}ms; remaining=${remaining}`, err?.message || err);
+            logDebug(`Fetch error for ${url}; retry in ${backoff}ms; remaining=${remaining}`, err?.message || err);
             await sleep(backoff + Math.floor(Math.random() * 200));
             return attempt(remaining - 1);
         }
@@ -90,14 +106,14 @@ async function fetchWithTimeoutAndRetry(url, opts = {}, timeout = NEW_API_TIMEOU
     }
     return attempt(retries);
 }
+/* Normalize upstream response into consistent bill shape */
 function normalizeCheckBillResponse(resp, account, sku) {
     try {
-        // If upstream nests a JSON string in data.response_text, parse it for a clearer reason
-        if (resp?.data?.response_text && typeof resp.data.response_text === 'string') {
+        if (resp?.data?.response_text && typeof resp.data.response_text === "string") {
             try {
                 resp.data.parsed_response_text = JSON.parse(resp.data.response_text);
             }
-            catch (e) {
+            catch {
                 resp.data.parsed_response_text = resp.data.response_text;
             }
         }
@@ -113,47 +129,58 @@ function normalizeCheckBillResponse(resp, account, sku) {
                 key: `${sku}::${account}`,
                 provider_id: sku,
                 account,
-                name: bill.customerName || bill.customer_name || '-',
-                address: bill.address || '-',
-                month: bill.month || '',
+                name: bill.customerName || bill.customer_name || "-",
+                address: bill.address || "-",
+                month: bill.month || "",
                 amount_current: String(money),
                 total: String(money),
-                amount_previous: '0',
+                amount_previous: "0",
                 raw: resp
             };
         }
-        // Build a clear reason from parsed_response_text -> resp.error -> status_code -> fallback
-        let reason = '';
+        // Build concise reason text
+        let reason = "";
         if (data?.parsed_response_text) {
             const pr = data.parsed_response_text;
-            if (typeof pr === 'string') {
+            if (typeof pr === "string")
                 reason = pr.slice(0, 400);
-            }
-            else if (typeof pr === 'object' && pr !== null) {
+            else if (pr && typeof pr === "object")
                 reason = pr?.error?.message || pr?.message || JSON.stringify(pr).slice(0, 400);
-            }
-            else {
+            else
                 reason = String(pr).slice(0, 400);
-            }
         }
-        if (!reason && resp?.error) {
-            reason = typeof resp.error === 'string' ? resp.error : JSON.stringify(resp.error).slice(0, 400);
-        }
-        if (!reason && data?.status_code) {
+        if (!reason && resp?.error)
+            reason = typeof resp.error === "string" ? resp.error : JSON.stringify(resp.error).slice(0, 400);
+        if (!reason && data?.status_code)
             reason = `Upstream status ${data.status_code}`;
+        // If upstream indicates 400 (client-level: no debt / invalid input), treat as no-debt result
+        if (data?.status_code === 400) {
+            const addressMsg = reason || "Không nợ cước / không có dữ liệu";
+            return {
+                key: `${sku}::${account}`,
+                provider_id: sku,
+                account,
+                name: `(Mã ${account})`,
+                address: addressMsg,
+                month: "",
+                amount_current: "0",
+                total: "0",
+                amount_previous: "0",
+                raw: resp
+            };
         }
         if (!reason)
-            reason = 'Không nợ cước / không có dữ liệu';
+            reason = "Không nợ cước / không có dữ liệu";
         return {
             key: `${sku}::${account}`,
             provider_id: sku,
             account,
             name: `(Mã ${account})`,
-            address: reason || 'Không nợ cước',
-            month: '',
-            amount_current: '0',
-            total: '0',
-            amount_previous: '0',
+            address: reason,
+            month: "",
+            amount_current: "0",
+            total: "0",
+            amount_previous: "0",
             raw: resp
         };
     }
@@ -163,55 +190,91 @@ function normalizeCheckBillResponse(resp, account, sku) {
             provider_id: sku,
             account,
             name: `(Mã ${account})`,
-            address: 'Lỗi parse',
-            month: '',
-            amount_current: '0',
-            total: '0',
-            amount_previous: '0',
+            address: "Lỗi parse",
+            month: "",
+            amount_current: "0",
+            total: "0",
+            amount_previous: "0",
             raw: resp
         };
     }
 }
+/* Handler */
 const handler = async (event) => {
     try {
-        if (event.httpMethod !== 'POST') {
-            return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
+        // CORS preflight
+        if (event.httpMethod === "OPTIONS") {
+            return {
+                statusCode: 204,
+                headers: {
+                    "Content-Type": "text/plain",
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type, Authorization"
+                },
+                body: ""
+            };
         }
-        // Header lookup case-insensitive
+        if (event.httpMethod !== "POST") {
+            return {
+                statusCode: 405,
+                headers: COMMON_HEADERS,
+                body: JSON.stringify({ error: "Method not allowed" })
+            };
+        }
+        // Normalize headers (case-insensitive)
         const headers = Object.keys(event.headers || {}).reduce((acc, k) => {
             acc[k.toLowerCase()] = event.headers[k];
             return acc;
         }, {});
-        const auth = (headers['authorization'] || '').toString().trim();
-        if (!auth && process.env.SKIP_AUTH !== 'true') {
-            return { statusCode: 401, body: JSON.stringify({ error: 'Unauthorized' }) };
+        const auth = (headers["authorization"] || "").toString().trim();
+        if (!auth && process.env.SKIP_AUTH !== "true") {
+            return {
+                statusCode: 401,
+                headers: COMMON_HEADERS,
+                body: JSON.stringify({ error: "Unauthorized" })
+            };
         }
-        // Parse body safely
+        // Parse body
         let body = {};
         try {
             body = event.body ? JSON.parse(event.body) : {};
         }
         catch (err) {
-            logWarn('Invalid JSON body', err?.message || err);
-            return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON body' }) };
+            logWarn("Invalid JSON body", err?.message || err);
+            return {
+                statusCode: 400,
+                headers: COMMON_HEADERS,
+                body: JSON.stringify({ error: "Invalid JSON body" })
+            };
         }
-        const contract_numbers = Array.isArray(body.contract_numbers) ? body.contract_numbers.map((v) => String(v)).map((s) => s.trim()).filter(Boolean) : [];
-        const sku = (body.sku || body.provider_id || '').toString().trim();
+        const contract_numbers = Array.isArray(body.contract_numbers)
+            ? body.contract_numbers.map((v) => String(v)).map((s) => s.trim()).filter(Boolean)
+            : [];
+        const sku = (body.sku || body.provider_id || "").toString().trim();
         if (!contract_numbers.length) {
-            return { statusCode: 400, body: JSON.stringify({ error: 'Thiếu contract_numbers (mảng)' }) };
+            return {
+                statusCode: 400,
+                headers: COMMON_HEADERS,
+                body: JSON.stringify({ error: "Thiếu contract_numbers (mảng)" })
+            };
         }
         if (!sku) {
-            return { statusCode: 400, body: JSON.stringify({ error: 'Thiếu sku (provider identifier)' }) };
+            return {
+                statusCode: 400,
+                headers: COMMON_HEADERS,
+                body: JSON.stringify({ error: "Thiếu sku (provider identifier)" })
+            };
         }
         const limit = pLimit(NEW_API_CONCURRENCY);
         const url = new URL(NEW_API_PATH, NEW_API_BASE_URL).toString();
         logInfo(`Bulk call: accounts=${contract_numbers.length} sku=${sku} concurrency=${NEW_API_CONCURRENCY}`);
         const tasks = contract_numbers.map((acc) => limit(async () => {
             try {
-                logDebug('Calling upstream for', acc);
+                logDebug("Calling upstream for", acc);
                 const upstream = await fetchWithTimeoutAndRetry(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", "User-Agent": "7ty-check-bills/1.0" },
                     body: JSON.stringify({ contract_number: acc, sku })
                 }, NEW_API_TIMEOUT_MS, NEW_API_MAX_RETRIES);
                 const normalized = normalizeCheckBillResponse(upstream, acc, sku);
@@ -219,14 +282,33 @@ const handler = async (event) => {
             }
             catch (errAny) {
                 const err = errAny;
-                // Build a friendly, structured error without exposing too much upstream HTML
-                const upstreamStatus = err?.status || (err?.message?.match(/Upstream (\d{3})/) || [])[1];
-                const preview = err?.preview || (typeof err?.message === 'string' ? err.message.slice(0, 400) : undefined);
+                const upstreamStatus = err?.status || (err?.message?.match?.(/Upstream (\d{3})/) || [])[1];
+                const preview = err?.preview || (typeof err?.message === "string" ? err.message.slice(0, 400) : undefined);
                 logWarn(`Account ${acc} error:`, upstreamStatus || err?.message || err);
+                // If upstream returned 400 as a captured error, treat as no-debt safe result
+                if (Number(upstreamStatus) === 400) {
+                    return {
+                        account: acc,
+                        ok: true,
+                        normalized: {
+                            key: `${sku}::${acc}`,
+                            provider_id: sku,
+                            account: acc,
+                            name: `(Mã ${acc})`,
+                            address: preview || "Không nợ cước",
+                            month: "",
+                            amount_current: "0",
+                            total: "0",
+                            amount_previous: "0",
+                            raw: errAny?.raw || null
+                        },
+                        raw: errAny?.raw || null
+                    };
+                }
                 return {
                     account: acc,
                     ok: false,
-                    error: preview ? `Upstream ${upstreamStatus || 'error'}: ${preview}` : (err?.message || 'Upstream error'),
+                    error: preview ? `${preview}` : (err?.message || "Upstream error"),
                     upstreamStatus: upstreamStatus ? Number(upstreamStatus) : undefined
                 };
             }
@@ -234,16 +316,16 @@ const handler = async (event) => {
         const results = await Promise.all(tasks);
         return {
             statusCode: 200,
-            headers: { 'Content-Type': 'application/json' },
+            headers: COMMON_HEADERS,
             body: JSON.stringify(results)
         };
     }
     catch (err) {
-        logError('Handler fatal error', err?.message || err);
+        logError("Handler fatal error", err?.message || err);
         return {
             statusCode: 500,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ error: err?.message || 'Internal error' })
+            headers: COMMON_HEADERS,
+            body: JSON.stringify({ error: err?.message || "Internal error" })
         };
     }
 };

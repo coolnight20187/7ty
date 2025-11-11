@@ -75,7 +75,6 @@ async function fetchWithTimeoutAndRetry(url: string, opts: RequestInit = {}, tim
           preview: snippet,
           fatal: (res.status >= 400 && res.status < 500 && res.status !== 429)
         });
-        // log limited preview for debug
         logWarn('Upstream non-ok response', { status: res.status, preview: snippet.slice(0, 400) });
         throw err;
       }
@@ -110,11 +109,9 @@ async function fetchWithTimeoutAndRetry(url: string, opts: RequestInit = {}, tim
 function joinUrl(base: string, path: string) {
   if (!base) return path;
   try {
-    // If base looks like a full URL, use new URL to combine
     if (/^https?:\/\//i.test(base)) {
       return new URL(path, base).toString();
     }
-    // base is likely a path-only string; join safely
     return (base.replace(/\/+$/, "") + "/" + path.replace(/^\/+/, "")).replace(/([^:])\/{2,}/g, "$1/");
   } catch {
     return (base.replace(/\/+$/, "") + "/" + path.replace(/^\/+/, ""));

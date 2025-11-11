@@ -1,3 +1,21 @@
 {
-	"siteId": "b8953cd3-9c95-4ee7-9e23-46f31972a9a2"
+	"siteId": "b8953cd3-9c95-4ee7-9e23-46f31972a9a2",
+	"geolocation": {
+		"data": {
+			"city": "Ho Chi Minh City",
+			"country": {
+				"code": "VN",
+				"name": "Vietnam"
+			},
+			"subdivision": {
+				"code": "SG",
+				"name": "Ho Chi Minh"
+			},
+			"timezone": "Asia/Ho_Chi_Minh",
+			"latitude": 10.822,
+			"longitude": 106.6257,
+			"postalCode": "700000"
+		},
+		"timestamp": 1762833831214
+	}
 }

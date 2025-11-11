@@ -1,14 +1,47 @@
-# netlify.toml
+# netlify.toml - project root
+
 [build]
-  command = "npm run build"
-  publish = "public"
+  command   = "npm run build"
+  publish   = "public"
   functions = "dist/netlify/functions"
 
+# Default Node version for build environment
 [build.environment]
   NODE_VERSION = "18"
 
+# Production-specific environment overrides (use Netlify UI for secrets)
 [context.production.environment]
   NODE_VERSION = "18"
 
+# Functions runtime bundler
 [functions]
   node_bundler = "esbuild"
+
+# Redirects: map public API paths to Netlify Functions
+# Put this here so netlify dev and deployed site both honor the mapping.
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+  force = false
+
+# Optional: explicit mapping for the specific endpoint (convenience)
+[[redirects]]
+  from = "/api/check-electricity/bulk"
+  to = "/.netlify/functions/get-bills"
+  status = 200
+  force = false
+
+# Recommended headers for responses (can be adjusted per-site)
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "no-referrer-when-downgrade"
+
+# Dev settings (used by netlify dev)
+[dev]
+  # port can be overridden by env PORT
+  port = 8888
+  framework = ""  # leave empty to let Netlify detect, or set e.g. "gatsby", "next" if desired
