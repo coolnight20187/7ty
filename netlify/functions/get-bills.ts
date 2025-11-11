@@ -106,6 +106,21 @@ async function fetchWithTimeoutAndRetry(url: string, opts: RequestInit = {}, tim
   return attempt(retries);
 }
 
+/* Robust URL join: ensures base+path combine sensibly */
+function joinUrl(base: string, path: string) {
+  if (!base) return path;
+  try {
+    // If base looks like a full URL, use new URL to combine
+    if (/^https?:\/\//i.test(base)) {
+      return new URL(path, base).toString();
+    }
+    // base is likely a path-only string; join safely
+    return (base.replace(/\/+$/, "") + "/" + path.replace(/^\/+/, "")).replace(/([^:])\/{2,}/g, "$1/");
+  } catch {
+    return (base.replace(/\/+$/, "") + "/" + path.replace(/^\/+/, ""));
+  }
+}
+
 /* Normalize upstream response into consistent bill shape */
 function normalizeCheckBillResponse(resp: any, account: string, sku: string) {
   try {
@@ -265,7 +280,8 @@ const handler: Handler = async (event) => {
     }
 
     const limit = pLimit(NEW_API_CONCURRENCY);
-    const url = new URL(NEW_API_PATH, NEW_API_BASE_URL).toString();
+    const fullUrl = joinUrl(NEW_API_BASE_URL, NEW_API_PATH);
+    logDebug("Upstream fullUrl:", fullUrl);
 
     logInfo(`Bulk call: accounts=${contract_numbers.length} sku=${sku} concurrency=${NEW_API_CONCURRENCY}`);
 
@@ -273,12 +289,16 @@ const handler: Handler = async (event) => {
       limit(async () => {
         try {
           logDebug("Calling upstream for", acc);
+          const reqBody = { contract_number: acc, sku };
+          logDebug("Upstream request headers:", { "Content-Type": "application/json", "User-Agent": "7ty-check-bills/1.0" });
+          logDebug("Upstream request body:", JSON.stringify(reqBody));
+
           const upstream = await fetchWithTimeoutAndRetry(
-            url,
+            fullUrl,
             {
               method: "POST",
               headers: { "Content-Type": "application/json", "User-Agent": "7ty-check-bills/1.0" },
-              body: JSON.stringify({ contract_number: acc, sku })
+              body: JSON.stringify(reqBody)
             } as RequestInit,
             NEW_API_TIMEOUT_MS,
             NEW_API_MAX_RETRIES
