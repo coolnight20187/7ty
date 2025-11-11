@@ -4,23 +4,24 @@ export const config = { runtime: "edge" };
  * POST /api/check-electricity/bulk
  * Body: { contract_numbers: string[], sku: string }
  *
- * Env used (set in Pages -> Project -> Environment variables & secrets):
- * - NEW_API_BASE_URL (e.g., https://bill.7ty.vn/api)
- * - NEW_API_PATH (e.g., /check-electricity)
- * - NEW_API_TIMEOUT_MS (ms)
- * - NEW_API_MAX_RETRIES
- * - NEW_API_CONCURRENCY
- * - SKIP_AUTH (set "true" to bypass Authorization during testing)
- * - LOG_LEVEL ("debug" to enable debug logs)
+ * Env:
+ * - NEW_API_BASE_URL, NEW_API_PATH or NEW_API_FULL_URL
+ * - NEW_API_TIMEOUT_MS, NEW_API_MAX_RETRIES, NEW_API_CONCURRENCY
+ * - SKIP_AUTH (set "true" to bypass auth for dev)
+ * - LOG_LEVEL
  */
-
 export async function onRequestPost({ request, env }) {
   const headersJson = { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" };
   try {
-    // Simple CORS preflight is handled by Pages automatically for OPTIONS,
-    // but respond here if browser sends OPTIONS as POST fallback
     if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET,POST,OPTIONS", "Access-Control-Allow-Headers": "Content-Type, Authorization" } });
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization"
+        }
+      });
     }
 
     const LOG_LEVEL = (env.LOG_LEVEL || "info").toLowerCase();
@@ -31,13 +32,11 @@ export async function onRequestPost({ request, env }) {
       error: (...args) => console.error("[bulk]", ...args)
     };
 
-    // Auth (optional)
     const auth = request.headers.get("authorization") || "";
     if (!auth && env.SKIP_AUTH !== "true") {
       return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: headersJson });
     }
 
-    // Parse body
     let body;
     try { body = await request.json(); } catch (e) {
       log.warn("Invalid JSON body", e?.message || e);
@@ -50,7 +49,6 @@ export async function onRequestPost({ request, env }) {
     if (!contract_numbers.length) return new Response(JSON.stringify({ error: "Thiếu contract_numbers (mảng)" }), { status: 400, headers: headersJson });
     if (!sku) return new Response(JSON.stringify({ error: "Thiếu sku (provider identifier)" }), { status: 400, headers: headersJson });
 
-    // Config with env fallbacks
     const NEW_API_BASE_URL = env.NEW_API_BASE_URL || "https://bill.7ty.vn/api";
     const NEW_API_PATH = env.NEW_API_PATH || "/check-electricity";
     const NEW_API_TIMEOUT_MS = Number(env.NEW_API_TIMEOUT_MS || 60000);

@@ -2,15 +2,12 @@ export const config = { runtime: "edge" };
 
 /**
  * Converted from Netlify handler to Cloudflare Pages function.
- * - Use onRequestPost({ request, env }) signature
- * - Reads env from `env`
- * - Returns JSON with same fields as original (target, sentBody, status, responseHeaders, preview, json, fetchError)
- * - Handles CORS preflight and includes Content-Type on responses
+ * - Uses onRequestPost({ request, env })
+ * - Returns JSON: { target, sentBody, status, responseHeaders, preview, json, fetchError }
+ * - Handles CORS preflight and sets Access-Control-Allow-Origin on responses
  */
-
 export async function onRequestPost({ request, env }) {
   try {
-    // Handle CORS preflight
     if (request.method === "OPTIONS") {
       return new Response(null, {
         status: 204,
@@ -22,15 +19,14 @@ export async function onRequestPost({ request, env }) {
       });
     }
 
-    const TARGET = env.NEW_API_FULL_URL || env.NEW_API_BASE_URL && (env.NEW_API_BASE_URL.replace(/\/+$/, "") + (env.NEW_API_PATH || "/check-electricity")) || "https://bill.7ty.vn/api/check-electricity";
+    const TARGET =
+      env.NEW_API_FULL_URL ||
+      (env.NEW_API_BASE_URL && env.NEW_API_BASE_URL.replace(/\/+$/, "") + (env.NEW_API_PATH || "/check-electricity")) ||
+      "https://bill.7ty.vn/api/check-electricity";
 
-    // Build request body for upstream test
     const testBody = { contract_number: "PB02020047317", sku: "00906815" };
-
-    // Loggable result container
     const result = { target: TARGET, sentBody: testBody };
 
-    // Do the fetch with timeout
     const timeout = Number(env.NEW_API_TIMEOUT_MS || 60000);
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeout);
@@ -55,8 +51,6 @@ export async function onRequestPost({ request, env }) {
     }
 
     result.status = res.status;
-
-    // collect some response headers (first-line)
     result.responseHeaders = {};
     try {
       const hdrs = res.headers;
@@ -70,11 +64,8 @@ export async function onRequestPost({ request, env }) {
       }
     } catch {}
 
-    // read text preview (limit)
     const text = await res.text();
     result.preview = (text || "").slice(0, 2000);
-
-    // try parse json if possible
     try { result.json = JSON.parse(text); } catch {}
 
     return new Response(JSON.stringify(result), {
