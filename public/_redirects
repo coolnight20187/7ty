@@ -1,0 +1,4 @@
+# Map legacy /api/* calls to Netlify Functions
+/api/*    /.netlify/functions/:splat    200
+# Explicit mapping for check-electricity bulk to our get-bills function
+/api/check-electricity/bulk    /.netlify/functions/get-bills    200
