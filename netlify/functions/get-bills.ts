@@ -75,6 +75,8 @@ async function fetchWithTimeoutAndRetry(url: string, opts: RequestInit = {}, tim
           preview: snippet,
           fatal: (res.status >= 400 && res.status < 500 && res.status !== 429)
         });
+        // log limited preview for debug
+        logWarn('Upstream non-ok response', { status: res.status, preview: snippet.slice(0, 400) });
         throw err;
       }
 
@@ -144,6 +146,24 @@ function normalizeCheckBillResponse(resp: any, account: string, sku: string) {
     }
     if (!reason && resp?.error) reason = typeof resp.error === "string" ? resp.error : JSON.stringify(resp.error).slice(0, 400);
     if (!reason && data?.status_code) reason = `Upstream status ${data.status_code}`;
+
+    // If upstream indicates 400 (client-level: no debt / invalid input), treat as no-debt result
+    if (data?.status_code === 400) {
+      const addressMsg = reason || "Không nợ cước / không có dữ liệu";
+      return {
+        key: `${sku}::${account}`,
+        provider_id: sku,
+        account,
+        name: `(Mã ${account})`,
+        address: addressMsg,
+        month: "",
+        amount_current: "0",
+        total: "0",
+        amount_previous: "0",
+        raw: resp
+      };
+    }
+
     if (!reason) reason = "Không nợ cước / không có dữ liệu";
 
     return {
@@ -257,7 +277,7 @@ const handler: Handler = async (event) => {
             url,
             {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: { "Content-Type": "application/json", "User-Agent": "7ty-check-bills/1.0" },
               body: JSON.stringify({ contract_number: acc, sku })
             } as RequestInit,
             NEW_API_TIMEOUT_MS,
@@ -271,10 +291,32 @@ const handler: Handler = async (event) => {
           const upstreamStatus = err?.status || (err?.message?.match?.(/Upstream (\d{3})/) || [])[1];
           const preview = err?.preview || (typeof err?.message === "string" ? err.message.slice(0, 400) : undefined);
           logWarn(`Account ${acc} error:`, upstreamStatus || err?.message || err);
+
+          // If upstream returned 400 as a captured error, treat as no-debt safe result
+          if (Number(upstreamStatus) === 400) {
+            return {
+              account: acc,
+              ok: true,
+              normalized: {
+                key: `${sku}::${acc}`,
+                provider_id: sku,
+                account: acc,
+                name: `(Mã ${acc})`,
+                address: preview || "Không nợ cước",
+                month: "",
+                amount_current: "0",
+                total: "0",
+                amount_previous: "0",
+                raw: errAny?.raw || null
+              },
+              raw: errAny?.raw || null
+            };
+          }
+
           return {
             account: acc,
             ok: false,
-            error: preview ? `Upstream ${upstreamStatus || "error"}: ${preview}` : (err?.message || "Upstream error"),
+            error: preview ? `${preview}` : (err?.message || "Upstream error"),
             upstreamStatus: upstreamStatus ? Number(upstreamStatus) : undefined
           };
         }
