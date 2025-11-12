@@ -52,7 +52,8 @@
     ".cache",
     "coverage",
     "build",
-    "public/**/*.js"
+    "public/**/*.js",
+    "netlify/functions"
   ],
   "ts-node": {
     "transpileOnly": true,
