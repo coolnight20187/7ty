@@ -6,7 +6,7 @@ export const config = { runtime: "edge" };
  * - Returns JSON: { target, sentBody, status, responseHeaders, preview, json, fetchError }
  * - Handles CORS preflight and sets Access-Control-Allow-Origin on responses
  */
-export async function onRequestPost({ request, env }) {
+export async function onRequestPost({ request, env }: any) {
   try {
     if (request.method === "OPTIONS") {
       return new Response(null, {
