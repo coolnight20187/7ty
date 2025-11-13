@@ -275,16 +275,17 @@
                 <thead class="table-light">
                   <tr>
                     <th style="width:36px"><input id="selectAllMain" type="checkbox" /></th>
-                    <th>STT</th>
-                    <th>Key</th>
-                    <th>Account</th>
-                    <th>Provider</th>
-                    <th>Họ và tên</th>
-                    <th>Địa chỉ</th>
-                    <th class="text-end">Kỳ này</th>
-                    <th class="text-end">Tổng</th>
-                    <th>NhậpAt</th>
-                    <th>Xóa</th>
+                    <th data-col="index" data-sort="index">STT <span class="sort-icon"></span></th>
+                    <th data-col="name" data-sort="text">TÊN KH <span class="sort-icon"></span></th>
+                    <th data-col="address" data-sort="text">ĐỊA CHỈ <span class="sort-icon"></span></th>
+                    <th data-col="account" data-sort="text">MÃ KH <span class="sort-icon"></span></th>
+                    <th data-col="prev" data-sort="money" class="text-end">KỲ TRƯỚC <span class="sort-icon"></span></th>
+                    <th data-col="curr" data-sort="money" class="text-end">KỲ NÀY <span class="sort-icon"></span></th>
+                    <th data-col="total" data-sort="money" class="text-end">TỔNG CỘNG <span class="sort-icon"></span></th>
+                    <th data-col="nhap" data-sort="date">NGÀY NHẬP KHO <span class="sort-icon"></span></th>
+                    <th data-col="xuat" data-sort="date">NGÀY XUẤT KHO <span class="sort-icon"></span></th>
+                    <th data-col="member" data-sort="text">KHÁCH HÀNG THẺ <span class="sort-icon"></span></th>
+                    <th data-col="employee" data-sort="text">NHÂN VIÊN BÁN <span class="sort-icon"></span></th>
                   </tr>
                 </thead>
                 <tbody id="mainResultsTbody"></tbody>
@@ -454,18 +455,16 @@
 
   <!-- Inline client script -->
   <script>
-    // Base used by your code; keep as-is in many places for readability
     const API_BASE = '/api';
 
-    // Redirect fetches that use API_BASE to Netlify Functions by converting '/api/kho/list' => '/.netlify/functions/kho-list'
     (function installFetchRedirect(){
       if (typeof window === 'undefined' || !window.fetch) return;
       const originalFetch = window.fetch.bind(window);
       window.fetch = function(input, init){
         try{
           if (typeof input === 'string' && input.indexOf(API_BASE + '/') === 0) {
-            const path = input.slice((API_BASE + '/').length); // e.g. 'kho/list'
-            const fnName = path.replace(/^\//,'').replace(/\//g,'-'); // 'kho-list'
+            const path = input.slice((API_BASE + '/').length);
+            const fnName = path.replace(/^\//,'').replace(/\//g,'-');
             input = '/.netlify/functions/' + fnName;
           } else if (typeof input === 'string' && input.startsWith('/api/')) {
             const path = input.slice('/api/'.length);
@@ -479,7 +478,6 @@
       };
     })();
 
-    // Small helpers and UI
     const $ = id => document.getElementById(id);
     const showToast = (msg, delay=3000) => {
       const tb = $('appToastBody');
@@ -494,11 +492,9 @@
     function fmtCurrency(v){ try{ return Number(v).toLocaleString('vi-VN') + ' ₫'; }catch{return v;} }
     function toggleSpinner(el, on=true){ const s=el.querySelector('.spinner-border'); if(!s) return; s.classList.toggle('d-none', !on); }
 
-    // State
     let results = [], members = [], employees = [];
     let loginModal = null, khoModal = null, historyModal = null, employeeModal = null, notesModal = null;
 
-    // Modal init and startup
     document.addEventListener('DOMContentLoaded', async () => {
       if (typeof bootstrap !== 'undefined') {
         if ($('loginModal')) loginModal = new bootstrap.Modal($('loginModal'), { backdrop: 'static' });
@@ -543,8 +539,50 @@
       if($('historyRefreshBtn')) $('historyRefreshBtn').addEventListener('click', async ()=>{ await refreshHistory(); showToast('Đã tải lịch sử'); });
       if($('historyExportCsvBtn')) $('historyExportCsvBtn').addEventListener('click', ()=>{ window.location.href = API_BASE + '/history?export=csv'; });
 
-      $('copyBtn').addEventListener('click', async ()=>{ try{ const trs=Array.from(document.querySelectorAll('#mainResultsTbody tr')); if(!trs.length){ showToast('Không có dữ liệu'); return;} const txt=trs.map(tr=>Array.from(tr.querySelectorAll('td')).map(td=>td.textContent.trim()).join('\t')).join('\n'); await navigator.clipboard.writeText(txt); showToast('Đã sao chép'); }catch(e){ showToast('Không thể sao chép'); } });
+      // Improved copy handler (copies header + visible rows, removes checkbox/action cells)
+      document.getElementById('copyBtn')?.addEventListener('click', async () => {
+        try {
+          const tbody = document.getElementById('mainResultsTbody');
+          if (!tbody) return showToast('Không có vùng kết quả để sao chép');
+          const rows = Array.from(tbody.querySelectorAll('tr'));
+          if (!rows.length) return showToast('Không có dữ liệu');
 
+          const headers = ['STT','TÊN KH','ĐỊA CHỈ','MÃ KH','KỲ TRƯỚC','KỲ NÀY','TỔNG CỘNG','NGÀY NHẬP KHO','NGÀY XUẤT KHO','KHÁCH HÀNG THẺ','NHÂN VIÊN BÁN'];
+          const lines = [headers.join('\t')];
+
+          rows.forEach((tr) => {
+            const cells = Array.from(tr.querySelectorAll('td')).map(td => td.textContent.trim());
+            // remove leading checkbox if present
+            if (cells.length > headers.length) cells.shift();
+            // remove trailing action cell if present
+            if (cells.length > headers.length) cells.pop();
+            while (cells.length < headers.length) cells.push('');
+            lines.push(cells.slice(0, headers.length).join('\t'));
+          });
+
+          const text = lines.join('\n');
+
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+            showToast('Đã sao chép dữ liệu vào clipboard');
+          } else {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.left = '-9999px';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            showToast('Đã sao chép (fallback)');
+          }
+        } catch (err) {
+          console.error('copy error', err);
+          showToast('Không thể sao chép dữ liệu');
+        }
+      });
+
+      // CSV export (keeps existing logic)
       $('exportCsvBtn').addEventListener('click', ()=>{ const cols=['stt','key','account','provider','name','address','amount_current','total','nhapAt']; const rows=results.map((r,i)=>[i+1,r.key,r.account,r.provider_id,r.name,r.address,r.amount_current,r.total,r.nhapAt||'']); const csv=[cols.join(',')].concat(rows.map(r=>r.map(c=> (c==null?'':('"'+String(c).replace(/"/g,'""')+'"'))).join(','))).join('\r\n'); const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='results.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); });
 
       $('selectAllMain')?.addEventListener('change', (e)=>{ const checked=e.target.checked; document.querySelectorAll('#mainResultsTbody input[type="checkbox"]').forEach(cb=>cb.checked=checked); });
@@ -560,7 +598,6 @@
       $('openHelpBtn')?.addEventListener('click', ()=>{ alert('Trợ giúp:\n- Tra cứu -> Nhập kết quả vào KHO -> Mở KHO để quản lý -> Bán để chuyển sang Lịch sử.\n- Cấu hình API tại server, kiểm tra SKIP_AUTH cho dev.'); });
     }
 
-    // Bulk lookup
     async function lookupBulk(){
       const btn=$('lookupBulkBtn'); toggleSpinner(btn,true);
       try{
@@ -569,12 +606,11 @@
         const resp=await fetch(API_BASE + '/check-electricity/bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sku,contract_numbers:accounts})});
         if(!resp.ok){ const e=await resp.json().catch(()=>({error:'Upstream'})); showToast('Lỗi: '+(e.error||resp.status)); toggleSpinner(btn,false); return; }
         const data=await resp.json();
-        results = data.map((r,i)=>{ const n=r.normalized||{}; return { key: n.key||`${sku}::${accounts[i]}`, ok:r.ok, account:accounts[i], provider_id:sku, name:n.name||'', address:n.address||'', amount_current: Number(n.amount_current||0), total: Number(n.total||n.amount_current||0), nhapAt: n.created_at||null, raw: r.raw||null }; });
+        results = data.map((r,i)=>{ const n=r.normalized||{}; return { key: n.key||`${sku}::${accounts[i]}`, ok:r.ok, account:accounts[i], provider_id:sku, name:n.name||'', address:n.address||'', amount_current: Number(n.amount_current||0), amount_previous: Number(n.amount_previous||0), total: Number(n.total||n.amount_current||0), nhapAt: n.created_at||null, xuatAt: n.xuatAt||null, memberName: n.memberName||'', employee_username: n.employee_username||'', raw: r.raw||null }; });
         renderMainResults(); showToast('Tra cứu hoàn tất: '+results.length+' mục');
       }catch(e){ console.error(e); showToast('Lỗi tra cứu'); } finally{ toggleSpinner(btn,false); }
     }
 
-    // Part 6 helpers: import/remove/render
     async function importAllResults(){
       if(!results.length){ showToast('Không có kết quả'); return; }
       const items=results.map(r=>({ key:r.key, account:r.account, provider_id:r.provider_id, name:r.name, address:r.address, amount_current:r.amount_current, total:r.total, raw:r.raw }));
@@ -584,10 +620,39 @@
     function removeSelectedResults(){ const keys=Array.from(document.querySelectorAll('#mainResultsTbody input[type="checkbox"]:checked')).map(cb=>cb.dataset.key); if(!keys.length){ showToast('Chọn ít nhất 1 mục'); return;} results=results.filter(r=>!keys.includes(r.key)); renderMainResults(); showToast('Đã xóa khỏi danh sách'); }
 
     function renderMainResults(){
-      const tbody=$('mainResultsTbody'); if(!tbody) return; tbody.innerHTML=''; const q=$('searchInput')?$('searchInput').value.trim().toLowerCase():''; const hideZero=$('hideZeroToggle')?$('hideZeroToggle').checked:false;
+      const tbody=$('mainResultsTbody'); if(!tbody) return;
+      tbody.innerHTML='';
+      const q=$('searchInput')?$('searchInput').value.trim().toLowerCase():'';
+      const hideZero=$('hideZeroToggle')?$('hideZeroToggle').checked:false;
       const visible=results.filter((r)=>{ if(hideZero && (Number(r.total||r.amount_current||0)===0)) return false; if(!q) return true; return ((r.name||'')+' '+(r.address||'')+' '+(r.account||'')+' '+(r.key||'')).toLowerCase().includes(q); });
-      visible.forEach((r,idx)=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td><input type="checkbox" data-key="${escapeHtml(r.key)}"></td><td>${idx+1}</td><td>${escapeHtml(r.key)}</td><td>${escapeHtml(r.account)}</td><td>${escapeHtml(r.provider_id)}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.address)}</td><td class="text-end">${fmtCurrency(r.amount_current||r.total)}</td><td class="text-end">${fmtCurrency(r.total||r.amount_current)}</td><td>${r.nhapAt?new Date(r.nhapAt).toLocaleString():''}</td><td><button class="btn btn-sm btn-danger row-remove" data-key="${escapeHtml(r.key)}"><i class="bx bx-trash"></i></button></td>`; tbody.appendChild(tr); });
+
+      visible.forEach((r,idx)=>{
+        const tr=document.createElement('tr');
+        const stt = idx + 1;
+        const prevVal = (r.amount_previous != null) ? r.amount_previous : (r.prev || 0);
+        const currVal = (r.amount_current != null) ? r.amount_current : (r.curr || 0);
+        const totalVal = (r.total != null) ? r.total : (currVal || 0);
+        const nhapTxt = r.nhapAt ? new Date(r.nhapAt).toLocaleString() : '';
+        const xuatTxt = r.xuatAt ? new Date(r.xuatAt).toLocaleString() : '';
+        tr.innerHTML = ''
+          + `<td><input type="checkbox" data-key="${escapeHtml(r.key)}" /></td>`
+          + `<td>${stt}</td>`
+          + `<td>${escapeHtml(r.name)}</td>`
+          + `<td>${escapeHtml(r.address)}</td>`
+          + `<td>${escapeHtml(r.account)}</td>`
+          + `<td class="text-end">${fmtCurrency(prevVal)}</td>`
+          + `<td class="text-end">${fmtCurrency(currVal)}</td>`
+          + `<td class="text-end">${fmtCurrency(totalVal)}</td>`
+          + `<td>${nhapTxt}</td>`
+          + `<td>${xuatTxt}</td>`
+          + `<td>${escapeHtml(r.memberName || r.member || '')}</td>`
+          + `<td>${escapeHtml(r.employee_username || r.employee || '')}</td>`
+          + `<td><button class="btn btn-sm btn-danger row-remove" data-key="${escapeHtml(r.key)}"><i class="bx bx-trash"></i></button></td>`;
+        tbody.appendChild(tr);
+      });
+
       document.querySelectorAll('.row-remove').forEach(b=>b.addEventListener('click', e=>{ const k=e.currentTarget.dataset.key; results=results.filter(x=>x.key!==k); renderMainResults(); showToast('Đã xóa'); }));
+
       const countEl = $('resultsCount'); if(countEl) countEl.textContent = visible.length+' mục (tổng '+results.length+')';
       updateSum();
     }
@@ -610,7 +675,6 @@
       if(el) el.textContent = fmtCurrency(sum);
     }
 
-    // Graceful offline ping
     (async ()=>{
       try {
         const h = await fetch(API_BASE + '/health');
