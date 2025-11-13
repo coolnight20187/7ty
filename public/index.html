@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 
-  <!-- Bootstrap 5 CSS (stable) -->
+  <!-- Bootstrap 5 CSS -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous" />
 
   <!-- Boxicons -->
@@ -19,7 +19,7 @@
   <!-- Optional app styles -->
   <link rel="stylesheet" href="style.css" />
 
-  <meta name="description" content="Tra cứu hóa đơn điện hàng loạt, quản lý KHO, bán bill. Giao tiếp duy nhất với CheckBill Pro (bill.7ty.vn)." />
+  <meta name="description" content="Tra cứu hóa đơn điện hàng loạt, quản lý KHO, bán bill." />
   <style>
     body { font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; }
     .main-container { padding: 20px 16px; max-width: 1400px; margin: 0 auto; }
@@ -30,16 +30,17 @@
     .fixed-footer { position: fixed; bottom: 12px; right: 12px; z-index: 1050; }
     .col-options label { display:block; margin-bottom:6px; }
     details.col-toggle summary { cursor:pointer; }
-    .admin-only { display:none; } /* can be toggled client-side when user is admin */
+    .admin-only { display:none; }
     .table-wrap { border-radius:6px; }
     .grid-container { display:grid; grid-template-columns: repeat(auto-fill,minmax(220px,1fr)); gap:12px; }
     .card.shadow-sm { border-radius:8px; }
     .result-state-container { border:1px dashed #ddd; border-radius:8px; }
+    .mt-fixed-top-space { height:78px; }
   </style>
 </head>
 <body class="bg-body-tertiary">
 
-  <!-- Login modal (shown if auth required) -->
+  <!-- Login modal -->
   <div class="modal fade" id="loginModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
     <div class="modal-dialog modal-dialog-centered">
       <div class="modal-content shadow-sm">
@@ -80,7 +81,6 @@
       <a class="navbar-brand fw-bold" href="#">
         <i class="bx bxs-bolt-circle text-primary"></i> Tra cứu & Bán Bill
       </a>
-
       <div class="ms-auto d-flex align-items-center gap-2">
         <span id="usernameDisplay" class="small text-muted">—</span>
         <div class="dropdown">
@@ -109,7 +109,7 @@
       <div class="col-12 controls-area">
         <div class="row g-3">
 
-          <!-- Column 1: Lookup -->
+          <!-- Lookup -->
           <div class="col-lg-3 col-md-6">
             <div class="card shadow-sm h-100">
               <div class="card-header fw-semibold"><i class="bx bx-search-alt"></i> Tra cứu hóa đơn</div>
@@ -139,7 +139,7 @@
             </div>
           </div>
 
-          <!-- Column 2: KHO -->
+          <!-- KHO -->
           <div class="col-lg-3 col-md-6">
             <div class="card shadow-sm h-100">
               <div class="card-header fw-semibold"><i class="bx bx-archive"></i> KHO</div>
@@ -157,7 +157,7 @@
             </div>
           </div>
 
-          <!-- Column 3: Employees -->
+          <!-- Employees -->
           <div class="col-lg-3 col-md-6">
             <div class="card shadow-sm h-100">
               <div class="card-header fw-semibold"><i class="bx bxs-user-detail"></i> Nhân viên</div>
@@ -178,7 +178,7 @@
             </div>
           </div>
 
-          <!-- Column 4: Khách hàng & Bán hàng -->
+          <!-- Members & Sell -->
           <div class="col-lg-3 col-md-6">
             <div class="card shadow-sm h-100">
               <div class="card-header fw-semibold"><i class="bx bx-user-circle"></i> Khách Hàng Thẻ & Bán</div>
@@ -294,14 +294,13 @@
           </div>
         </div>
 
-        <!-- Small action row -->
+        <!-- Small action row & pagination -->
         <div class="d-flex gap-2 mb-3">
           <button id="importAllBtn" class="btn btn-outline-primary btn-sm">Nhập tất cả vào KHO</button>
           <button id="removeSelectedBtn" class="btn btn-outline-danger btn-sm">Xóa chọn</button>
           <div class="ms-auto text-muted small" id="resultsCount">0 mục</div>
         </div>
 
-        <!-- Pagination & view containers (Part 3) -->
         <div class="card shadow-sm mb-3">
           <div class="card-body">
             <div class="row g-2 align-items-center justify-content-end pagination-row">
@@ -366,7 +365,6 @@
 
         <div id="gridContainer" class="grid-container d-none"></div>
       </div>
-
     </div>
   </main>
 
@@ -451,34 +449,56 @@
   </div>
 
   <!-- Optional libs -->
-  <!-- Put xlsx.full.min.js in public/ or use CDN as needed -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
-  <!-- Load bootstrap bundle BEFORE any script that uses `bootstrap` -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
 
   <!-- Inline client script -->
   <script>
+    // Base used by your code; keep as-is in many places for readability
     const API_BASE = '/api';
 
-    function $(id){ return document.getElementById(id); }
-    function showToast(msg, delay=3000){
+    // Redirect fetches that use API_BASE to Netlify Functions by converting '/api/kho/list' => '/.netlify/functions/kho-list'
+    (function installFetchRedirect(){
+      if (typeof window === 'undefined' || !window.fetch) return;
+      const originalFetch = window.fetch.bind(window);
+      window.fetch = function(input, init){
+        try{
+          if (typeof input === 'string' && input.indexOf(API_BASE + '/') === 0) {
+            const path = input.slice((API_BASE + '/').length); // e.g. 'kho/list'
+            const fnName = path.replace(/^\//,'').replace(/\//g,'-'); // 'kho-list'
+            input = '/.netlify/functions/' + fnName;
+          } else if (typeof input === 'string' && input.startsWith('/api/')) {
+            const path = input.slice('/api/'.length);
+            const fnName = path.replace(/^\//,'').replace(/\//g,'-');
+            input = '/.netlify/functions/' + fnName;
+          }
+        }catch(e){
+          console.warn('fetch redirect error', e);
+        }
+        return originalFetch(input, init);
+      };
+    })();
+
+    // Small helpers and UI
+    const $ = id => document.getElementById(id);
+    const showToast = (msg, delay=3000) => {
       const tb = $('appToastBody');
       if(tb) tb.textContent = msg;
-      if(typeof bootstrap === 'undefined') return;
+      if(typeof bootstrap === 'undefined') { alert(msg); return; }
       const toastEl = $('appToast');
       if(!toastEl) return;
       const t = bootstrap.Toast.getOrCreateInstance(toastEl);
       t.show();
       if(delay) setTimeout(()=>t.hide(), delay);
-    }
-    function fmtCurrency(v){ try{return Number(v).toLocaleString('vi-VN')+' ₫';}catch{return v;} }
+    };
+    function fmtCurrency(v){ try{ return Number(v).toLocaleString('vi-VN') + ' ₫'; }catch{return v;} }
     function toggleSpinner(el, on=true){ const s=el.querySelector('.spinner-border'); if(!s) return; s.classList.toggle('d-none', !on); }
 
+    // State
     let results = [], members = [], employees = [];
-
-    // modal instances will be created after DOM + bootstrap loaded
     let loginModal = null, khoModal = null, historyModal = null, employeeModal = null, notesModal = null;
 
+    // Modal init and startup
     document.addEventListener('DOMContentLoaded', async () => {
       if (typeof bootstrap !== 'undefined') {
         if ($('loginModal')) loginModal = new bootstrap.Modal($('loginModal'), { backdrop: 'static' });
@@ -531,7 +551,7 @@
 
       $('loginForm')?.addEventListener('submit', (ev)=>{ ev.preventDefault(); if(loginModal) loginModal.hide(); initApp(); showToast('Đăng nhập (tạm)'); });
 
-      $('sellBtn')?.addEventListener('click', async (e)=>{ const btn=e.currentTarget; toggleSpinner(btn,true); try{ const memberId=$('memberSelect').value; if(!memberId){ showToast('Chọn member'); return; } const from=Number($('targetFrom').value||0); const to=Number($('targetTo').value||0); const url=new URL(API_BASE + '/kho/list', location.origin); if(from) url.searchParams.append('fromAmount', from); if(to) url.searchParams.append('toAmount', to); const resp=await fetch(url.toString()); const arr=resp.ok?await resp.json():[]; if(!arr.length){ showToast('Không có bill'); return; } if(!confirm('Xác nhận bán '+arr.length+' mục?')) return; const keys=arr.map(x=>x.key); const s=await fetch(API_BASE + '/sell',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({member_id: memberId, keys})}); const j=await s.json(); showToast('Đã bán: '+(j.sold_count||0)); await refreshKho(); await refreshHistory(); }catch(err){console.error(err); showToast('Lỗi khi bán')} finally{ toggleSpinner(btn,false);} });
+      $('sellBtn')?.addEventListener('click', async (e)=>{ const btn=e.currentTarget; toggleSpinner(btn,true); try{ const memberId=$('memberSelect').value; if(!memberId){ showToast('Chọn member'); toggleSpinner(btn,false); return; } const from=Number($('targetFrom').value||0); const to=Number($('targetTo').value||0); const url=new URL(API_BASE + '/kho/list', location.origin); if(from) url.searchParams.append('fromAmount', from); if(to) url.searchParams.append('toAmount', to); const resp=await fetch(url.toString()); const arr=resp.ok?await resp.json():[]; if(!arr.length){ showToast('Không có bill'); toggleSpinner(btn,false); return; } if(!confirm('Xác nhận bán '+arr.length+' mục?')) { toggleSpinner(btn,false); return; } const keys=arr.map(x=>x.key); const s=await fetch(API_BASE + '/sell',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({member_id: memberId, keys})}); const j=await s.json(); showToast('Đã bán: '+(j.sold_count||0)); await refreshKho(); await refreshHistory(); }catch(err){console.error(err); showToast('Lỗi khi bán')} finally{ toggleSpinner(btn,false);} });
 
       $('employeeSearchBtn')?.addEventListener('click', ()=>{ const q=$('employeeSearchInput').value.trim().toLowerCase(); const sel=$('employeeSelect'); sel.innerHTML=''; employees.filter(e=> (e.username||'').toLowerCase().includes(q) || (e.full_name||'').toLowerCase().includes(q)).forEach(emp=>{ const opt=document.createElement('option'); opt.value=emp.id; opt.textContent=(emp.full_name||emp.username)+' • '+(emp.role||'user'); sel.appendChild(opt); }); });
 
@@ -540,6 +560,7 @@
       $('openHelpBtn')?.addEventListener('click', ()=>{ alert('Trợ giúp:\n- Tra cứu -> Nhập kết quả vào KHO -> Mở KHO để quản lý -> Bán để chuyển sang Lịch sử.\n- Cấu hình API tại server, kiểm tra SKIP_AUTH cho dev.'); });
     }
 
+    // Bulk lookup
     async function lookupBulk(){
       const btn=$('lookupBulkBtn'); toggleSpinner(btn,true);
       try{
@@ -553,7 +574,7 @@
       }catch(e){ console.error(e); showToast('Lỗi tra cứu'); } finally{ toggleSpinner(btn,false); }
     }
 
-    // Use the Part 6 implementations for import/remove/render helpers (final versions)
+    // Part 6 helpers: import/remove/render
     async function importAllResults(){
       if(!results.length){ showToast('Không có kết quả'); return; }
       const items=results.map(r=>({ key:r.key, account:r.account, provider_id:r.provider_id, name:r.name, address:r.address, amount_current:r.amount_current, total:r.total, raw:r.raw }));
@@ -583,14 +604,13 @@
 
     async function refreshHistory(){ try{ const resp=await fetch(API_BASE + '/history?limit=200'); if(!resp.ok){ showToast('Không thể tải lịch sử'); return []; } const arr=await resp.json(); const tbody=$('historyTbody'); if(!tbody) return arr; tbody.innerHTML=''; arr.forEach(h=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${h.id}</td><td>${escapeHtml(h.key)}</td><td>${escapeHtml(h.account)}</td><td>${escapeHtml(h.provider_id)}</td><td>${escapeHtml(h.name)}</td><td>${escapeHtml(h.member_name||'')}</td><td class="text-end">${fmtCurrency(h.total)}</td><td>${h.soldAt?new Date(h.soldAt).toLocaleString():''}</td>`; tbody.appendChild(tr); }); return arr; }catch(e){console.error('refreshHistory',e); showToast('Lỗi tải lịch sử'); return []; } }
 
-    // small utility to format money for table footer
     function updateSum(){
       const sum = results.reduce((s,r)=>s + (Number(r.total)||0), 0);
       const el = $('sumTotal');
       if(el) el.textContent = fmtCurrency(sum);
     }
 
-    // Graceful fallback for pages without backend endpoints:
+    // Graceful offline ping
     (async ()=>{
       try {
         const h = await fetch(API_BASE + '/health');
@@ -601,6 +621,5 @@
     })();
 
   </script>
-
 </body>
 </html>

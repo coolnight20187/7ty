@@ -109,9 +109,13 @@ document.addEventListener('DOMContentLoaded', () => {
     if (loading) {
       btn.disabled = true;
       btn.classList.add('is-loading');
+      const s = btn.querySelector('.spinner-border');
+      if (s) s.classList.remove('d-none');
     } else {
       btn.disabled = false;
       btn.classList.remove('is-loading');
+      const s = btn.querySelector('.spinner-border');
+      if (s) s.classList.add('d-none');
     }
   }
 
@@ -786,5 +790,43 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   window.renderCurrent = renderCurrent;
+
+  // small accessibility helper: select all checkbox for table
+  selectAllCb && selectAllCb.addEventListener('change', (ev) => {
+    const on = ev.target.checked;
+    document.querySelectorAll('input.form-check-input[data-key]').forEach(cb => { cb.checked = on; const tr = cb.closest('tr'); if (tr) tr.classList.toggle('selected', on); });
+  });
+
+  // minimal CSS injection for hidden class (if not present)
+  (function ensureHiddenCss() {
+    if (document.getElementById('app-js-hidden-style')) return;
+    const s = document.createElement('style');
+    s.id = 'app-js-hidden-style';
+    s.textContent = '.hidden{display:none!important}.selected{background:#f8f9fa}';
+    document.head.appendChild(s);
+  })();
+
+  // Boot: non-blocking health + reveal UI
+  (async function boot() {
+    try {
+      const h = await fetch('/api/health');
+      if (!h.ok) console.warn('Health check non-ok', h.status);
+    } catch (e) {
+      console.warn('Health check failed', e);
+    }
+
+    try { await refreshMembers(); } catch (e) { /* noop */ }
+    try {
+      const resp = await fetch('/api/employees');
+      if (resp.ok) {
+        const emps = await resp.json();
+        if (Array.isArray(emps) && emps.length > 0) {
+          document.querySelectorAll('.admin-only').forEach(el => el.classList.remove('d-none'));
+        }
+      }
+    } catch (e) { /* noop */ }
+
+    document.querySelectorAll('#appHeader, #appContent').forEach(el => el.classList.remove('d-none'));
+  })();
 
 }); // DOMContentLoaded end
