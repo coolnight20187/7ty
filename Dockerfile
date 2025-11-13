@@ -42,16 +42,17 @@ WORKDIR /usr/src/app
 # Create non-root user
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
 
-# Copy only runtime artifacts
+# Copy only runtime artifacts and lockfile (required for npm ci)
 COPY --from=builder /usr/src/app/dist ./dist
 COPY --from=builder /usr/src/app/package.json ./package.json
+COPY --from=builder /usr/src/app/package-lock.json ./package-lock.json
 COPY --from=builder /usr/src/app/public ./public
 COPY --from=builder /usr/src/app/.env.example ./.env.example
 
 ENV NODE_ENV=production
 
-# Install only production dependencies
-RUN npm ci --production
+# Install only production dependencies using lockfile
+RUN npm ci --production --omit=dev
 
 # Switch to non-root user
 USER appuser
