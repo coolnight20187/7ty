@@ -1,375 +1,289 @@
--- 001_create_tables.sql
--- Migration: tạo các bảng cơ bản và tiện ích cho dự án "Tra cứu & Bán Bill"
--- Dành cho PostgreSQL / Supabase
--- Thực thi toàn bộ trong một transaction để rollback khi có lỗi
--- CHÚ Ý BẢO MẬT: không lưu mật khẩu thô trong migration; dùng seed script để hash bcrypt và cập nhật password_hash
+-- 002_seed_admin.sql
+-- Resilient development seed for "Tra cứu & Bán Bill"
+-- Matches schema defined in 001_create_tables.sql.
+-- Safe to run multiple times: checks table existence, required NOT NULL columns without defaults,
+-- and inserts only when safe. Does not alter schema.
+-- IMPORTANT: Replace <BCRYPT_HASH_OF_PASSWORD> with a real bcrypt hash only for controlled dev use.
+-- Prefer scripts/seed_admin.js for secure password hashing and parameterized DB access.
 
-BEGIN;
+-------------------------
+-- Informational message
+-------------------------
+SELECT 'Running 002_seed_admin.sql - development-only seed. Review before executing.' AS message;
 
---------------------------------------------------------------------------------
--- 0. EXTENSIONS (nếu cần)
--- pgcrypto: cung cấp crypt() và gen_salt() (useful for SQL-side hashing if available)
--- uuid-ossp: tạo UUID nếu cần
--- citext: case-insensitive text (optional, helpful for usernames/emails)
---------------------------------------------------------------------------------
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS citext;
-
---------------------------------------------------------------------------------
--- 1. Utility: timestamp trigger function
--- Dùng chung để cập nhật updated_at trên nhiều bảng
---------------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION util_update_timestamp()
-RETURNS TRIGGER LANGUAGE plpgsql AS $$
-BEGIN
-  NEW.updated_at = NOW();
-  RETURN NEW;
-END;
-$$;
-
---------------------------------------------------------------------------------
--- 2. TABLE: employees
--- Lưu thông tin nhân viên / user (admin, user)
--- password_hash: lưu bcrypt hash (tạo từ server-side seed script)
--- meta: JSONB để lưu preference, roles, flags
---------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS employees (
-  id              BIGSERIAL PRIMARY KEY,
-  username        CITEXT NOT NULL UNIQUE,
-  password_hash   TEXT NOT NULL,
-  role            TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin','user')),
-  full_name       TEXT,
-  email           TEXT,
-  phone           TEXT,
-  address         TEXT,
-  avatar_url      TEXT,
-  company_name    TEXT,
-  tax_code        TEXT,
-  meta            JSONB,
-  last_login_at   TIMESTAMPTZ,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-DROP TRIGGER IF EXISTS trg_employees_update_at ON employees;
-CREATE TRIGGER trg_employees_update_at
-BEFORE UPDATE ON employees
-FOR EACH ROW EXECUTE PROCEDURE util_update_timestamp();
-
---------------------------------------------------------------------------------
--- 3. TABLE: members
--- Khách hàng/đối tác (dùng khi bán bill)
---------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS members (
-  id          BIGSERIAL PRIMARY KEY,
-  name        TEXT NOT NULL,
-  email       TEXT,
-  zalo        TEXT,
-  bank        TEXT,
-  meta        JSONB,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-DROP TRIGGER IF EXISTS trg_members_update_at ON members;
-CREATE TRIGGER trg_members_update_at
-BEFORE UPDATE ON members
-FOR EACH ROW EXECUTE PROCEDURE util_update_timestamp();
-
---------------------------------------------------------------------------------
--- 4. TABLE: kho
--- Inventory of bills. key is unique (provider_id::account)
--- numeric fields use NUMERIC(18,2) for monetary accuracy
---------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS kho (
-  key              TEXT PRIMARY KEY,
-  account          TEXT NOT NULL,
-  provider_id      TEXT NOT NULL,
-  provider_code    TEXT,
-  name             TEXT,
-  address          TEXT,
-  amount_previous  NUMERIC(18,2) DEFAULT 0,
-  amount_current   NUMERIC(18,2) DEFAULT 0,
-  total            NUMERIC(18,2) DEFAULT 0,
-  currency         TEXT DEFAULT 'VND',
-  nhapAt           TIMESTAMPTZ,
-  xuatAt           TIMESTAMPTZ,
-  customer         TEXT,
-  raw              JSONB,
-  tags             TEXT[],
-  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-DROP TRIGGER IF EXISTS trg_kho_update_at ON kho;
-CREATE TRIGGER trg_kho_update_at
-BEFORE UPDATE ON kho
-FOR EACH ROW EXECUTE PROCEDURE util_update_timestamp();
-
---------------------------------------------------------------------------------
--- 5. TABLE: history
--- Records sold transactions (copy of kho row at time of sale + sale metadata)
---------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS history (
-  id                BIGSERIAL PRIMARY KEY,
-  key               TEXT NOT NULL,
-  account           TEXT NOT NULL,
-  provider_id       TEXT NOT NULL,
-  name              TEXT,
-  address           TEXT,
-  amount_previous   NUMERIC(18,2) DEFAULT 0,
-  amount_current    NUMERIC(18,2) DEFAULT 0,
-  total             NUMERIC(18,2) DEFAULT 0,
-  currency          TEXT DEFAULT 'VND',
-  nhapAt            TIMESTAMPTZ,
-  xuatAt            TIMESTAMPTZ,
-  soldAt            TIMESTAMPTZ,
-  member_id         BIGINT REFERENCES members(id) ON DELETE SET NULL,
-  member_name       TEXT,
-  employee_id       BIGINT REFERENCES employees(id) ON DELETE SET NULL,
-  employee_username TEXT,
-  fee               NUMERIC(18,2) DEFAULT 0,
-  note              TEXT,
-  raw               JSONB,
-  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
---------------------------------------------------------------------------------
--- 6. TABLE: work_notes
--- Simple notes attached to employees or items
---------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS work_notes (
-  id               BIGSERIAL PRIMARY KEY,
-  employee_id      BIGINT REFERENCES employees(id) ON DELETE CASCADE,
-  author_id        BIGINT REFERENCES employees(id) ON DELETE SET NULL,
-  author_username  TEXT,
-  note_text        TEXT NOT NULL,
-  meta             JSONB,
-  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
---------------------------------------------------------------------------------
--- 7. TABLE: kho_audit
--- Lightweight audit log capturing inserts/updates/deletes on kho
---------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS kho_audit (
-  id          BIGSERIAL PRIMARY KEY,
-  key         TEXT,
-  operation   TEXT NOT NULL CHECK (operation IN ('INSERT','UPDATE','DELETE')),
-  actor       TEXT,
-  snapshot    JSONB,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE OR REPLACE FUNCTION trg_kho_audit_fn()
-RETURNS TRIGGER LANGUAGE plpgsql AS $$
-BEGIN
-  IF (TG_OP = 'DELETE') THEN
-    INSERT INTO kho_audit(key, operation, actor, snapshot, created_at)
-    VALUES (OLD.key, TG_OP, NULLIF(current_setting('app.current_user', true), ''), to_jsonb(OLD), NOW());
-    RETURN OLD;
-  ELSE
-    INSERT INTO kho_audit(key, operation, actor, snapshot, created_at)
-    VALUES (NEW.key, TG_OP, NULLIF(current_setting('app.current_user', true), ''), to_jsonb(NEW), NOW());
-    RETURN NEW;
-  END IF;
-END;
-$$;
-
-DROP TRIGGER IF EXISTS trg_kho_audit ON kho;
-CREATE TRIGGER trg_kho_audit
-AFTER INSERT OR UPDATE OR DELETE ON kho
-FOR EACH ROW EXECUTE PROCEDURE trg_kho_audit_fn();
-
---------------------------------------------------------------------------------
--- 8. MIGRATIONS LOG (simple tracking)
---------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS migrations_log (
-  id SERIAL PRIMARY KEY,
-  filename TEXT NOT NULL,
-  applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  checksum TEXT,
-  notes TEXT
-);
-
---------------------------------------------------------------------------------
--- 9. INDEXES & CONSTRAINTS
---------------------------------------------------------------------------------
-CREATE INDEX IF NOT EXISTS idx_members_name_lower ON members (LOWER(name));
-CREATE INDEX IF NOT EXISTS idx_kho_provider_account ON kho(provider_id, account);
-CREATE INDEX IF NOT EXISTS idx_kho_nhapAt ON kho(nhapAt DESC);
-CREATE INDEX IF NOT EXISTS idx_kho_created_at ON kho(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_kho_tags_gin ON kho USING GIN (tags);
-CREATE INDEX IF NOT EXISTS idx_kho_raw_gin ON kho USING GIN (raw);
-CREATE INDEX IF NOT EXISTS idx_history_soldAt ON history(soldAt DESC);
-CREATE INDEX IF NOT EXISTS idx_employees_username_lower ON employees (LOWER(username));
-CREATE INDEX IF NOT EXISTS idx_kho_audit_key ON kho_audit(key);
-
---------------------------------------------------------------------------------
--- 10. HELPER: set_app_user
--- Set session variable used by triggers to record actor in audit logs
---------------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION set_app_user(v TEXT) RETURNS TEXT LANGUAGE sql AS $$
-  SELECT set_config('app.current_user', v, true);
-$$;
-
---------------------------------------------------------------------------------
--- 11. HELPER: set_admin_password_sql
--- SQL helper using pgcrypto to set an admin password (server-only, optional)
--- NOTE: prefer hashing with bcrypt in server code and updating password via parameterized query.
---------------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION set_admin_password_sql(p_username TEXT, p_plain TEXT)
+-------------------------------------------------------------------------------
+-- Section 1: Helper — create_or_update_admin_by_hash
+-- Expects a bcrypt hash; does not generate bcrypt here.
+-------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION create_or_update_admin_by_hash(p_username TEXT, p_bcrypt_hash TEXT)
 RETURNS VOID LANGUAGE plpgsql AS $$
-DECLARE
-  hashed TEXT;
 BEGIN
-  hashed := crypt(p_plain, gen_salt('bf', 12));
-  UPDATE employees SET password_hash = hashed, updated_at = NOW() WHERE username = p_username;
-  IF NOT FOUND THEN
+  IF p_bcrypt_hash IS NULL OR char_length(p_bcrypt_hash) < 10 THEN
+    RAISE EXCEPTION 'Invalid bcrypt hash provided';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM employees WHERE username = p_username) THEN
+    UPDATE employees
+      SET password_hash = p_bcrypt_hash, updated_at = COALESCE(updated_at, now())
+    WHERE username = p_username;
+    RAISE NOTICE 'Updated existing admin password for %', p_username;
+  ELSE
     INSERT INTO employees (username, password_hash, role, full_name, created_at, updated_at)
-    VALUES (p_username, hashed, 'admin', 'Quản Trị Viên', NOW(), NOW());
+    VALUES (p_username, p_bcrypt_hash, 'admin', 'Quản Trị Viên', now(), now());
+    RAISE NOTICE 'Inserted admin user %', p_username;
   END IF;
 END;
 $$;
 
---------------------------------------------------------------------------------
--- 12. Stored procedure: sell_items
--- Atomically move items from kho -> history
---------------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION sell_items(p_keys TEXT[], p_member_id BIGINT, p_employee_id BIGINT DEFAULT NULL, p_fee NUMERIC DEFAULT 0)
-RETURNS TABLE(history_id BIGINT, key TEXT, account TEXT, provider_id TEXT, total NUMERIC, soldAt TIMESTAMPTZ) LANGUAGE plpgsql AS $$
+-------------------------------------------------------------------------------
+-- Section 2: Optionally create admin via injected bcrypt hash
+-- Usage (psql): \set myhash 'the_bcrypt_hash_here' then:
+--   SELECT create_or_update_admin_by_hash('admin', :'myhash');
+-------------------------------------------------------------------------------
+DO $$
 DECLARE
-  rec RECORD;
-  hrec RECORD;
-  mname TEXT;
-  i INT;
+  v_hash TEXT := '<BCRYPT_HASH_OF_PASSWORD>'; -- replace before running if you want SQL-based admin creation
 BEGIN
-  IF p_member_id IS NOT NULL THEN
-    SELECT name INTO mname FROM members WHERE id = p_member_id;
+  IF v_hash IS NULL OR v_hash = '<BCRYPT_HASH_OF_PASSWORD>' THEN
+    RAISE NOTICE 'No bcrypt hash provided in script variable. Skipping admin creation via SQL. Use scripts/seed_admin.js to create admin with bcrypt.';
+  ELSE
+    PERFORM create_or_update_admin_by_hash('admin', v_hash);
   END IF;
+END;
+$$ LANGUAGE plpgsql;
 
-  IF p_keys IS NULL OR array_length(p_keys,1) IS NULL THEN
+-------------------------------------------------------------------------------
+-- Section 3: Convenience: generate_secure_password (dev only)
+-------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION generate_secure_password(p_bytes INT DEFAULT 24)
+RETURNS TEXT LANGUAGE plpgsql AS $$
+DECLARE
+  b BYTEA := gen_random_bytes(p_bytes);
+BEGIN
+  RETURN encode(b, 'base64');
+END;
+$$;
+
+-------------------------------------------------------------------------------
+-- Section 4: Seed members (idempotent; matches members table in 001_create_tables.sql)
+-- members columns per migration: id, name, email, zalo, bank, meta, created_at, updated_at
+-------------------------------------------------------------------------------
+DO $$
+DECLARE
+  cnt integer;
+  required_cols TEXT[];
+  filtered_required_cols TEXT[];
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = current_schema() AND table_name = 'members'
+  ) THEN
+    RAISE NOTICE 'Table members not present; skipping members seed.';
     RETURN;
   END IF;
 
-  FOR i IN array_lower(p_keys,1)..array_upper(p_keys,1) LOOP
-    SELECT * INTO rec FROM kho WHERE key = p_keys[i] FOR UPDATE;
-    IF rec IS NULL THEN
-      CONTINUE;
-    END IF;
+  -- Find NOT NULL columns without defaults
+  SELECT array_agg(column_name) INTO required_cols
+  FROM information_schema.columns
+  WHERE table_schema = current_schema()
+    AND table_name = 'members'
+    AND is_nullable = 'NO'
+    AND column_default IS NULL;
 
-    INSERT INTO history (
-      key, account, provider_id, name, address,
-      amount_previous, amount_current, total, nhapAt, xuatAt, soldAt,
-      member_id, member_name, employee_id, employee_username, fee, raw, created_at
-    )
-    VALUES (
-      rec.key, rec.account, rec.provider_id, rec.name, rec.address,
-      rec.amount_previous, rec.amount_current, rec.total, rec.nhapAt, rec.xuatAt, NOW(),
-      p_member_id, mname, p_employee_id, NULL, p_fee, rec.raw, NOW()
-    )
-    RETURNING id, key, account, provider_id, total INTO hrec;
-
-    DELETE FROM kho WHERE key = rec.key;
-
-    history_id := hrec.id;
-    key := hrec.key;
-    account := hrec.account;
-    provider_id := hrec.provider_id;
-    total := hrec.total;
-    soldAt := NOW();
-
-    RETURN NEXT;
-  END LOOP;
-END;
-$$;
-
---------------------------------------------------------------------------------
--- 13. MATERIALIZED VIEW: mv_kho_summary
---------------------------------------------------------------------------------
-CREATE MATERIALIZED VIEW IF NOT EXISTS mv_kho_summary AS
-SELECT provider_id,
-       COUNT(*) AS items,
-       SUM(COALESCE(total,0))::numeric(18,2) AS total_sum,
-       AVG(COALESCE(total,0))::numeric(18,2) AS avg_total,
-       MAX(COALESCE(total,0))::numeric(18,2) AS max_total
-FROM kho
-GROUP BY provider_id
-WITH NO DATA;
-
-CREATE INDEX IF NOT EXISTS idx_mv_kho_summary_provider ON mv_kho_summary(provider_id);
-
-CREATE OR REPLACE FUNCTION refresh_kho_summary() RETURNS VOID LANGUAGE plpgsql AS $$
-BEGIN
-  REFRESH MATERIALIZED VIEW CONCURRENTLY mv_kho_summary;
-EXCEPTION WHEN SQLSTATE '55000' THEN
-  REFRESH MATERIALIZED VIEW mv_kho_summary;
-END;
-$$;
-
---------------------------------------------------------------------------------
--- 14. SAMPLE DATA (non-sensitive placeholders)
--- REMOVE/MODIFY in production
---------------------------------------------------------------------------------
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM members WHERE name = 'Default Member') THEN
-    INSERT INTO members (name, email, zalo, bank, meta, created_at, updated_at)
-    VALUES ('Default Member', 'member@example.local', '0123456789', 'VIB 123456789', jsonb_build_object('note','sample member'), NOW(), NOW());
-  END IF;
-END;
-$$;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM employees WHERE username = 'admin') THEN
-    INSERT INTO employees (username, password_hash, role, full_name, email, created_at, updated_at)
-    VALUES ('admin', 'PLACEHOLDER_HASH_CHANGE_ME', 'admin', 'Quản Trị Viên', 'admin@example.local', NOW(), NOW());
-  END IF;
-END;
-$$;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM kho WHERE key = 'EVN::123456789') THEN
-    INSERT INTO kho (key, account, provider_id, provider_code, name, address,
-      amount_previous, amount_current, total, nhapAt, raw, tags, created_at, updated_at)
-    VALUES (
-      'EVN::123456789', '123456789', 'EVN', 'EVN-001', 'Nguyen Van A', 'Hanoi, Vietnam',
-      0, 120000.00, 120000.00, NOW() - INTERVAL '30 days',
-      jsonb_build_object('example','sample upstream payload','bill_month','2025-10'),
-      ARRAY['sample','electricity'], NOW(), NOW()
+  IF required_cols IS NULL THEN
+    filtered_required_cols := ARRAY[]::text[];
+  ELSE
+    filtered_required_cols := ARRAY(
+      SELECT unnest(required_cols)
+      EXCEPT
+      SELECT unnest(ARRAY['id','member_id','createdat','created_at','created','updated','updated_at'])
     );
   END IF;
 
-  IF NOT EXISTS (SELECT 1 FROM kho WHERE key = 'EVN::987654321') THEN
-    INSERT INTO kho (key, account, provider_id, provider_code, name, address,
-      amount_previous, amount_current, total, nhapAt, raw, tags, created_at, updated_at)
-    VALUES (
-      'EVN::987654321', '987654321', 'EVN', 'EVN-002', 'Tran Thi B', 'Ho Chi Minh City',
-      0, 85000.00, 85000.00, NOW() - INTERVAL '15 days',
-      jsonb_build_object('example','another payload','bill_month','2025-10'),
-      ARRAY['urgent','electricity'], NOW(), NOW()
+  IF array_length(filtered_required_cols,1) IS NOT NULL AND array_length(filtered_required_cols,1) > 0 THEN
+    RAISE NOTICE 'Members table has required NOT NULL columns without defaults: %; skipping members seed.', filtered_required_cols;
+    RETURN;
+  END IF;
+
+  EXECUTE format('SELECT COUNT(*) FROM %I.%I', current_schema(), 'members') INTO cnt;
+  IF cnt > 0 THEN
+    RAISE NOTICE 'Members table not empty (count=%); skipping members seed.', cnt;
+    RETURN;
+  END IF;
+
+  INSERT INTO members (name, email, zalo, bank, meta, created_at, updated_at)
+  VALUES
+    ('Công ty A', NULL, '0123456789', 'Vietcombank - 12345678', jsonb_build_object('type','company'), now(), now()),
+    ('Nguyễn Văn B', NULL, '0987654321', 'BIDV - 87654321', jsonb_build_object('type','individual'), now(), now()),
+    ('Cá nhân C', NULL, NULL, 'Techcombank - 11122233', jsonb_build_object('type','individual'), now(), now());
+
+  RAISE NOTICE 'Inserted sample members (3 rows).';
+END;
+$$ LANGUAGE plpgsql;
+
+-------------------------------------------------------------------------------
+-- Section 5: Seed kho (idempotent; matches kho table in 001_create_tables.sql)
+-------------------------------------------------------------------------------
+DO $$
+DECLARE
+  cnt integer;
+  nowts timestamptz := now();
+  required_count integer;
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = current_schema() AND table_name = 'kho'
+  ) THEN
+    RAISE NOTICE 'Table kho not present; skipping kho seed.';
+    RETURN;
+  END IF;
+
+  SELECT COUNT(*) INTO required_count
+  FROM information_schema.columns
+  WHERE table_schema = current_schema() AND table_name = 'kho'
+    AND column_name IN ('key','account','provider_id','name','address','amount_previous','amount_current','total','nhapAt','raw','customer','created_at','updated_at');
+
+  IF required_count < 13 THEN
+    RAISE NOTICE 'kho table missing expected columns (found % of 13); skipping KHO inserts.', required_count;
+    RETURN;
+  END IF;
+
+  EXECUTE format('SELECT COUNT(*) FROM %I.%I', current_schema(), 'kho') INTO cnt;
+  IF cnt > 0 THEN
+    RAISE NOTICE 'KHO table not empty (count=%); skipping KHO seed.', cnt;
+    RETURN;
+  END IF;
+
+  INSERT INTO kho (key, account, provider_id, provider_code, name, address, amount_previous, amount_current, total, currency, nhapAt, customer, raw, created_at, updated_at)
+  VALUES
+    ('00906815::PB02020047317','PB02020047317','00906815','PB02020047317','NGUYEN VAN A','123 Nguyen Trai, Q1, HCM',0,150000,150000,'VND', nowts, 'Công ty A', jsonb_build_object('sample',true,'bill_month','2025-09'), nowts, nowts),
+    ('00906815::PB02020047318','PB02020047318','00906815','PB02020047318','TRAN THI B','456 Le Lai, Q1, HCM',0,230000,230000,'VND', nowts - interval '1 day', 'Nguyễn Văn B', jsonb_build_object('sample',true,'bill_month','2025-09'), nowts - interval '1 day', nowts - interval '1 day'),
+    ('00906819::PB99000000001','PB99000000001','00906819','PB99000000001','DOAN HUU C','789 Hai Ba Trung, HN',0,120000,120000,'VND', nowts - interval '2 days', 'Cá nhân C', jsonb_build_object('sample',true,'bill_month','2025-08'), nowts - interval '2 days', nowts - interval '2 days');
+
+  RAISE NOTICE 'Inserted sample KHO items (3 rows).';
+END;
+$$ LANGUAGE plpgsql;
+
+-------------------------------------------------------------------------------
+-- Section 6: Seed history (idempotent; matches history table in 001_create_tables.sql)
+-------------------------------------------------------------------------------
+DO $$
+DECLARE
+  cnt integer;
+  nowts timestamptz := now();
+  required_cols TEXT[];
+  filtered_required_cols TEXT[];
+  admin_emp_id BIGINT;
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = current_schema() AND table_name = 'history'
+  ) THEN
+    RAISE NOTICE 'Table history not present; skipping history seed.';
+    RETURN;
+  END IF;
+
+  SELECT array_agg(column_name) INTO required_cols
+  FROM information_schema.columns
+  WHERE table_schema = current_schema()
+    AND table_name = 'history'
+    AND is_nullable = 'NO'
+    AND column_default IS NULL;
+
+  IF required_cols IS NULL THEN
+    filtered_required_cols := ARRAY[]::text[];
+  ELSE
+    filtered_required_cols := ARRAY(
+      SELECT unnest(required_cols)
+      EXCEPT
+      SELECT unnest(ARRAY['id','history_id','createdat','created_at','created','updated','updated_at'])
     );
   END IF;
+
+  IF array_length(filtered_required_cols,1) IS NOT NULL AND array_length(filtered_required_cols,1) > 0 THEN
+    RAISE NOTICE 'History table has required NOT NULL columns without defaults: %; skipping history seed.', filtered_required_cols;
+    RETURN;
+  END IF;
+
+  EXECUTE format('SELECT COUNT(*) FROM %I.%I', current_schema(), 'history') INTO cnt;
+  IF cnt > 0 THEN
+    RAISE NOTICE 'History table not empty (count=%); skipping history seed.', cnt;
+    RETURN;
+  END IF;
+
+  -- Try to find admin employee id for employee_id references; may be NULL
+  SELECT id INTO admin_emp_id FROM employees WHERE username = 'admin' LIMIT 1;
+
+  INSERT INTO history
+    (key, account, provider_id, name, address, amount_previous, amount_current, total, currency, nhapAt, xuatAt, soldAt, member_id, member_name, employee_id, employee_username, fee, note, raw, created_at)
+  VALUES
+    (
+      '00906815::SOLD0001',
+      'SOLD0001',
+      '00906815',
+      'LE VAN D',
+      '12 Tran Phu, HCM',
+      0,
+      180000,
+      180000,
+      'VND',
+      nowts - interval '10 days',
+      nowts - interval '5 days',
+      nowts - interval '5 days',
+      (SELECT id FROM members WHERE name = 'Công ty A' LIMIT 1),
+      'Công ty A',
+      admin_emp_id,
+      'admin',
+      0,
+      'Sample sold 1',
+      jsonb_build_object('sample', true),
+      nowts - interval '5 days'
+    ),
+    (
+      '00906818::SOLD0002',
+      'SOLD0002',
+      '00906818',
+      'PHAM THI E',
+      '34 Nguyen Hue, HCM',
+      0,
+      210000,
+      210000,
+      'VND',
+      nowts - interval '20 days',
+      nowts - interval '2 days',
+      nowts - interval '2 days',
+      (SELECT id FROM members WHERE name = 'Nguyễn Văn B' LIMIT 1),
+      'Nguyễn Văn B',
+      admin_emp_id,
+      'admin',
+      0,
+      'Sample sold 2',
+      jsonb_build_object('sample', true),
+      nowts - interval '2 days'
+    );
+
+  RAISE NOTICE 'Inserted sample history rows (2).';
 END;
-$$;
+$$ LANGUAGE plpgsql;
 
---------------------------------------------------------------------------------
--- 15. MAINTENANCE: ANALYZE for planner statistics
---------------------------------------------------------------------------------
-ANALYZE employees;
-ANALYZE members;
-ANALYZE kho;
-ANALYZE history;
-ANALYZE work_notes;
+-------------------------------------------------------------------------------
+-- Section 7: Optional runtime role for local testing (safe)
+-------------------------------------------------------------------------------
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'local_app_runtime') THEN
+    CREATE ROLE local_app_runtime NOINHERIT;
+    RAISE NOTICE 'Created local_app_runtime role (no login).';
+  ELSE
+    RAISE NOTICE 'local_app_runtime role already exists; skipping.';
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
 
---------------------------------------------------------------------------------
--- 16. MIGRATION LOG ENTRY (basic)
---------------------------------------------------------------------------------
-INSERT INTO migrations_log (filename, checksum, notes)
-VALUES ('001_create_tables.sql', md5('001_create_tables.sql' || NOW()::text), 'Initial schema with audit, helpers and sample data')
-ON CONFLICT DO NOTHING;
-
-COMMIT;
+-------------------------------------------------------------------------------
+-- Final informational messages
+-------------------------------------------------------------------------------
+SELECT '002_seed_admin.sql finished.' AS message;
+SELECT ' - If admin not created via SQL, use scripts/seed_admin.js to create admin with bcrypt hash.' AS note;
+SELECT ' - Review and remove sample data before deploying to production.' AS note;
+SELECT ' - Do not store plain-text passwords; use bcrypt hashed values only.' AS note;
