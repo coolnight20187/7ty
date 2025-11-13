@@ -15,7 +15,7 @@
     "lint": "eslint . --ext .ts,.js",
     "format": "prettier --write \"**/*.{ts,js,json,css,md,html}\"",
     "clean": "rimraf dist .cache",
-    "prepare": "husky install",
+    "prepare": "husky install || true",
     "test": "echo \"No tests configured\" && exit 0"
   },
   "keywords": [
