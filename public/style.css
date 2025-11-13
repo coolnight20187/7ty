@@ -1,16 +1,8 @@
 /* ======================= style.css (extended) =======================
    Additions and refinements:
-   - More responsive rules
-   - Utility helpers (spacing, text truncation, badges, chips)
-   - Accessibility focus styles
-   - Animations for micro-interactions
-   - Table zebra, sticky footer, totals, RTL support tweaks
-   - Dark-theme scrollbar and form adjustments
-   - Print header/footer controls
-   - Money badge, status badges, tag chips
-   - Form validation visual helpers
-   - Mini components: avatar group, pill buttons, small controls
-   - Comments explain purpose for each block
+   - Responsive rules, helpers, badges, avatars, forms, animations
+   - Table zebra, sticky totals, grid cards, placeholders
+   - Dark theme tweaks, print helpers, RTL fixes, dev helpers
    =================================================================== */
 
 /* ===================== 10. Spacing & layout helpers ===================== */
